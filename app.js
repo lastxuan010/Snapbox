@@ -311,14 +311,78 @@ function countItemsInGroup(groupId) {
 
 // 默认导入：把原文件"移动"进软件资源目录（userData/library）
 // 只有拿不到磁盘路径时（如从剪贴板粘贴），才退回"base64 存进数据库"的兜底方案
+// ===== 导入方式设置：move（默认，移动原文件）| copy（复制，保留原文件）=====
+const IMPORT_MODE_KEY = 'memorie.importMode';
+const HINT_MORE_KEY = 'memorie.hint.moreMenu';
+
+function getImportMode() {
+  return localStorage.getItem(IMPORT_MODE_KEY) === 'copy' ? 'copy' : 'move';
+}
+
+function hasImportMode() {
+  const v = localStorage.getItem(IMPORT_MODE_KEY);
+  return v === 'copy' || v === 'move';
+}
+
+function setImportMode(mode) {
+  localStorage.setItem(IMPORT_MODE_KEY, mode === 'copy' ? 'copy' : 'move');
+}
+
+// 首次导入必现的说明：文件会去哪 + 移动还是复制
+async function ensureImportModeChosen() {
+  if (hasImportMode()) return true;
+
+  const choice = await confirmChoice({
+    title: '文件会存到哪里？',
+    message: '导入的文件会统一放进软件的资源文件夹。\n'
+      + '（之后可在「⋯ → 打开软件资源文件夹」里查看）\n\n'
+      + '请选择原文件的处理方式，之后可以在「⋯」菜单里随时修改：',
+    optionA: '移动到资源文件夹（推荐：原位置不再保留文件）',
+    optionB: '复制到资源文件夹（原文件保留在原处）',
+    optionC: { label: '取消' }
+  });
+  if (!choice || choice === 'c') return false;
+
+  setImportMode(choice === 'b' ? 'copy' : 'move');
+  return true;
+}
+
+// 撤销一次导入：文件归位 + 删掉刚建的记录
+async function undoImport(items, steps) {
+  if (steps.length) await window.electronAPI?.undoImportFiles?.(steps);
+  for (const item of items) {
+    await deleteItem(item.id);
+    state.items = state.items.filter((i) => i.id !== item.id);
+  }
+  if (items.some((i) => i.id === player.currentId)) stopMusic();
+  if (items.some((i) => i.id === state.selectedId)) resetPreview();
+  renderFolders();
+  renderGrid();
+  showToast('已撤销这次导入，文件已放回原处');
+}
+
+// 删除的撤销：把记录放回去（仅在没删文件时可用）
+async function restoreItems(snapshots) {
+  for (const snap of snapshots) {
+    await saveItem(snap);
+    state.items.push(snap);
+  }
+  renderFolders();
+  renderGrid();
+  showToast('已撤销删除');
+}
+
 async function addFiles(files) {
   const targetGroupId = state.selectedGroupId !== 'all' && state.selectedGroupId !== 'ungrouped'
     ? state.selectedGroupId
     : null;
 
+  const mode = getImportMode();
   let added = 0;
-  let moved = 0;
-  let moveFailed = 0;
+  let placed = 0;
+  let placeFailed = 0;
+  const createdItems = [];
+  const undoSteps = [];
 
   for (const file of files) {
     const mediaType = file.type.startsWith('video/') ? 'video'
@@ -351,13 +415,14 @@ async function addFiles(files) {
     if (sourcePath && window.electronAPI?.placeMediaFile) {
       // 落到"当前分组对应的子文件夹"（未分组 → 「未分组」文件夹）
       const folder = targetGroupId ? groupFolderName(targetGroupId) : getUngroupedName();
-      const res = await window.electronAPI.placeMediaFile(id, sourcePath, folder);
+      const res = await window.electronAPI.placeMediaFile(id, sourcePath, folder, mode);
       if (res && res.ok) {
-        backupPath = res.path;   // 已移入软件资源文件夹
-        keptSourcePath = '';     // 原位置的文件已被移走
-        moved++;
+        backupPath = res.path;                       // 已放进软件资源文件夹
+        if (mode !== 'copy') keptSourcePath = '';    // 移动：原位置不再保留文件
+        placed++;
+        undoSteps.push({ libraryPath: res.path, originalPath: sourcePath });
       } else {
-        moveFailed++;            // 移动失败 → 退回"引用原路径"
+        placeFailed++;                               // 处理失败 → 退回"引用原路径"
       }
     }
     // 既没入库、又没有原路径 → 只能把内容本身存进库
@@ -383,6 +448,7 @@ async function addFiles(files) {
 
     await saveItem(item);
     state.items.push(item);
+    createdItems.push(item);
     added++;
   }
 
@@ -390,9 +456,27 @@ async function addFiles(files) {
   renderGrid();
 
   const parts = [`已导入 ${added} 个项目`];
-  if (moved) parts.push(`${moved} 个文件已移入软件资源文件夹`);
-  if (moveFailed) parts.push(`${moveFailed} 个移动失败（改为引用原路径）`);
-  showToast(parts.join('，'));
+  if (placed) {
+    parts.push(mode === 'copy'
+      ? `${placed} 个文件已复制到资源文件夹`
+      : `${placed} 个文件已移入资源文件夹`);
+  }
+  if (placeFailed) parts.push(`${placeFailed} 个未能入库（改为引用原路径）`);
+
+  showToast(parts.join('，'), {
+    duration: 8000,
+    action: createdItems.length
+      ? { label: '撤销', onAction: () => undoImport(createdItems, undoSteps) }
+      : null
+  });
+
+  // 首次导入后一次性提示：更多操作藏在卡片上的 ⋯ 里
+  if (added && !localStorage.getItem(HINT_MORE_KEY)) {
+    localStorage.setItem(HINT_MORE_KEY, '1');
+    setTimeout(() => {
+      showToast('提示：鼠标移到卡片上会出现 ⋯ 按钮（右键也可以），复制 / 查看文件位置 / 删除都在里面', { duration: 8000 });
+    }, 8200);
+  }
 }
 
 async function createNote() {
@@ -496,12 +580,7 @@ function renderFolders() {
           <input class="folder-item__name" value="${escapeHtml(group.name)}" readonly data-id="${group.id}" title="${isCustom ? '双击或点击 ✎ 重命名' : ''}">
         </div>
         <span class="folder-item__count">${count}</span>
-        ${isCustom ? `
-          <div class="folder-item__actions">
-            <button class="btn btn--sm btn--ghost rename-folder" data-id="${group.id}" title="重命名">✎</button>
-            <button class="btn btn--sm btn--ghost btn--danger delete-folder" data-id="${group.id}" title="删除">×</button>
-          </div>
-        ` : ''}
+        <button type="button" class="folder-item__more" data-more="${group.id}" title="更多操作" aria-label="更多操作">⋯</button>
       </div>
     `;
   }).join('');
@@ -512,6 +591,14 @@ function renderFolders() {
       ev.preventDefault();
       ev.stopPropagation();
       openGroupContextMenu(ev, el.dataset.id);
+    });
+  });
+
+  // 行尾 ⋯ 按钮：和右键弹出同一个菜单（让"打开文件夹/重命名/删除"可被发现）
+  $$('.folder-item__more').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openGroupContextMenu(e, btn.dataset.more);
     });
   });
 
@@ -557,19 +644,7 @@ function renderFolders() {
     });
   });
 
-  $$('.rename-folder').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      startRenameGroup(btn.dataset.id);
-    });
-  });
 
-  $$('.delete-folder').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      removeGroup(btn.dataset.id);
-    });
-  });
 }
 
 function startRenameGroup(groupId) {
@@ -734,6 +809,7 @@ function renderGrid() {
           ${media}
           <span class="thumb-card__badge ${linked ? 'is-linked' : ''}"${badgeTip}>${badge}</span>
           <span class="thumb-card__name">${escapeHtml(name)}</span>
+          <button type="button" class="thumb-card__more" data-more="${item.id}" title="更多操作" aria-label="更多操作">⋯</button>
         </div>
       `;
     }).join('');
@@ -763,6 +839,18 @@ function renderGrid() {
           : [cardId];
         openContextMenu(e, ids);
       });
+
+      // ⋯ 按钮：和右键同一个菜单（不用右键也能找到这些操作）
+      const moreBtn = card.querySelector('.thumb-card__more');
+      if (moreBtn) {
+        moreBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const ids = state.selection.has(cardId) && state.selection.size > 1
+            ? [...state.selection]
+            : [cardId];
+          openContextMenu(e, ids);
+        });
+      }
 
       card.addEventListener('click', (e) => {
         const id = card.dataset.id;
@@ -802,7 +890,7 @@ function renderGrid() {
     });
   }
 
-  const filterLabels = { all: '全部', image: '图片', video: '视频', note: '笔记' };
+  const filterLabels = { all: '全部', image: '图片', video: '视频', audio: '音频', note: '笔记' };
   $('#statusCount').textContent = `${items.length} 个项目`;
   $('#statusType').textContent = filterLabels[state.filter] || '全部';
 }
@@ -1135,6 +1223,7 @@ async function removeItems(ids, deleteFile) {
   let removed = 0;
   let trashed = 0;
   let failFiles = 0;
+  const snapshots = []; // 用于"撤销"（只在没删文件时可用）
 
   for (const id of ids) {
     const item = state.items.find((i) => i.id === id);
@@ -1153,6 +1242,7 @@ async function removeItems(ids, deleteFile) {
       }
     }
 
+    snapshots.push({ ...item });
     await deleteItem(id);
     state.items = state.items.filter((i) => i.id !== id);
     removed++;
@@ -1168,9 +1258,15 @@ async function removeItems(ids, deleteFile) {
   updateBatchBar();
 
   const parts = [`已移除 ${removed} 个项目`];
-  if (trashed) parts.push(`文件已移入回收站 ${trashed} 个`);
+  if (trashed) parts.push(`文件已移入回收站 ${trashed} 个（可从回收站还原）`);
   if (failFiles) parts.push(`${failFiles} 个文件删除失败（记录已保留）`);
-  showToast(parts.join('，'));
+
+  // 没动文件时提供"撤销"；删了文件就只能去回收站找
+  const canUndo = !trashed && !failFiles && snapshots.length > 0;
+  showToast(parts.join('，'), {
+    duration: canUndo ? 8000 : 6000,
+    action: canUndo ? { label: '撤销', onAction: () => restoreItems(snapshots) } : null
+  });
 }
 
 // 确认对话框：resolve 'a' | 'b' | 'c' | null(取消)
@@ -1241,12 +1337,15 @@ async function confirmDeleteFlow(ids) {
 
   const withFile = targets.filter((t) => itemDiskPath(t));
   const names = targets.length === 1 ? `「${targets[0].name}」` : `${targets.length} 个项目`;
+  const where = withFile.length
+    ? `\n\n文件位置：${itemDiskPath(withFile[0])}${withFile.length > 1 ? ` 等 ${withFile.length} 个` : ''}`
+    : '';
 
   if (!withFile.length) {
-    // 纯库内 base64 / 笔记，不涉及磁盘文件，沿用单确认
+    // 没有磁盘文件（笔记 / 纯内嵌数据），删掉记录本身即可
     const confirmed = await confirmDelete({
-      title: '删除？',
-      message: `确定要删除${names}吗？此操作无法撤销。`,
+      title: '从软件中删除？',
+      message: `确定要删除${names}吗？\n删除后可以点提示条上的「撤销」找回。`,
       confirmText: '删除'
     });
     if (!confirmed) return;
@@ -1254,18 +1353,16 @@ async function confirmDeleteFlow(ids) {
     return;
   }
 
-  // 仅老数据会同时存在"外部原路径 + 库内备份"，此时才需要第三个选项
-  const backedUpCount = targets.filter((t) => t.sourcePath && t.dataURL && !t.backupPath).length;
+  // 同时有"原文件 + 资源文件夹里的文件"（复制导入 / 老数据）时才出现第三个选项
+  const withBoth = targets.filter((t) => t.sourcePath && itemDiskPath(t) !== t.sourcePath).length;
 
   const choice = await confirmChoice({
     title: `删除${names}？`,
-    message: withFile.length === targets.length
-      ? '这些项目在磁盘上有关联文件，你想怎么删除？'
-      : `其中 ${withFile.length} 个项目在磁盘上有关联文件，你想怎么删除？`,
-    optionA: '仅从软件移除（保留文件）',
+    message: '这些项目在磁盘上有对应文件，请选择处理方式：' + where,
+    optionA: '仅从列表移除（文件保留在资源文件夹）',
     optionB: `移除并删除文件（${withFile.length} 个，移入回收站）`,
-    optionC: backedUpCount > 0
-      ? { label: `删除源文件，保留软件内备份（${backedUpCount} 个已备份）` }
+    optionC: withBoth > 0
+      ? { label: `只删除原文件，保留资源文件夹里的文件（${withBoth} 个）` }
       : null
   });
   if (!choice) return;
@@ -1287,7 +1384,8 @@ async function removeSourceKeepBackup(ids) {
   for (const id of ids) {
     const item = state.items.find((i) => i.id === id);
     if (!item || !item.sourcePath) continue;
-    if (!item.dataURL) {
+    // 只有"资源文件夹里有文件"或"库内还有内嵌备份"时，删源文件才安全
+    if (!item.backupPath && !item.dataURL) {
       skipped++;
       continue;
     }
@@ -1389,41 +1487,129 @@ async function handleContextAction(action) {
   }
 }
 
-// ===== 分组右键菜单：在资源管理器中打开对应文件夹 =====
-async function handleGroupContextAction(action) {
-  const ctx = contextMenuContext;
-  closeContextMenu();
-  if (!ctx) return;
-
-  if (action === 'openInExplorer') {
-    const res = await window.electronAPI?.openLibraryFolder?.(groupFolderName(ctx.id));
-    if (res && !res.ok) showToast('打开失败：' + (res.error || '未知错误'));
-  }
-}
-
-function openGroupContextMenu(e, groupId) {
+// 统一渲染菜单：定位到鼠标处，并聚焦第一个可用项（支持键盘操作）
+function renderContextMenu(e, rows, context) {
   const menu = $('#contextMenu');
-  contextMenuContext = { type: 'group', id: groupId };
-  contextMenuTargetIds = [];
-  menu.innerHTML = '<button type="button" data-action="openInExplorer">在资源管理器中打开</button>';
-  menu.hidden = false;
+  contextMenuContext = context;
 
+  menu.innerHTML = rows.map((row) => {
+    if (row.separator) return '<div class="context-menu__separator"></div>';
+    const tip = row.tip ? ` title="${escapeHtml(row.tip)}"` : '';
+    const cls = row.danger ? ' class="danger"' : '';
+    return `<button type="button" data-action="${row.action}"${row.disabled ? ' disabled' : ''}${cls}${tip}>${row.label}</button>`;
+  }).join('');
+
+  menu.hidden = false;
   const rect = menu.getBoundingClientRect();
   const x = Math.min(e.clientX, window.innerWidth - rect.width - 8);
   const y = Math.min(e.clientY, window.innerHeight - rect.height - 8);
   menu.style.left = `${Math.max(4, x)}px`;
   menu.style.top = `${Math.max(4, y)}px`;
+
+  const first = menu.querySelector('button:not([disabled])');
+  if (first) first.focus();
+}
+
+// 菜单键盘导航：↑↓ 移动、Home/End 首尾、Esc 关闭
+function onContextMenuKeydown(e) {
+  const menu = $('#contextMenu');
+  if (menu.hidden) return;
+
+  const btns = [...menu.querySelectorAll('button:not([disabled])')];
+  if (!btns.length) return;
+
+  const cur = btns.indexOf(document.activeElement);
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    btns[cur < 0 ? 0 : (cur + 1) % btns.length].focus();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    btns[cur < 0 ? btns.length - 1 : (cur - 1 + btns.length) % btns.length].focus();
+  } else if (e.key === 'Home') {
+    e.preventDefault();
+    btns[0].focus();
+  } else if (e.key === 'End') {
+    e.preventDefault();
+    btns[btns.length - 1].focus();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    closeContextMenu();
+  }
+}
+
+// ===== 分组菜单（右键分组 / 行尾 ⋯ 按钮共用）=====
+async function handleGroupContextAction(action) {
+  const ctx = contextMenuContext;
+  closeContextMenu();
+  if (!ctx) return;
+  const groupId = ctx.id;
+
+  if (action === 'openInExplorer') {
+    const res = await window.electronAPI?.openLibraryFolder?.(groupFolderName(groupId));
+    if (res && !res.ok) showToast('打开失败：' + (res.error || '未知错误'));
+    return;
+  }
+  if (action === 'renameGroup') {
+    startRenameGroup(groupId);
+    return;
+  }
+  if (action === 'deleteGroup') {
+    await removeGroup(groupId);
+  }
+}
+
+function openGroupContextMenu(e, groupId) {
+  const rows = [{ label: '在资源管理器中打开', action: 'openInExplorer' }];
+
+  if (groupId !== 'all') {
+    rows.push({ separator: true });
+    rows.push({ label: '重命名分组', action: 'renameGroup' });
+  }
+  if (groupId !== 'all' && groupId !== 'ungrouped') {
+    rows.push({ label: '删除分组', action: 'deleteGroup', danger: true });
+  }
+
+  contextMenuTargetIds = [];
+  renderContextMenu(e, rows, { type: 'group', id: groupId });
+}
+
+// ===== 工具栏「⋯」菜单：导入方式等设置 =====
+async function handleAppContextAction(action) {
+  closeContextMenu();
+
+  if (action === 'importMove') {
+    setImportMode('move');
+    showToast('导入方式已设为：移动原文件到资源文件夹');
+    return;
+  }
+  if (action === 'importCopy') {
+    setImportMode('copy');
+    showToast('导入方式已设为：复制（原文件保留在原处）');
+    return;
+  }
+  if (action === 'openLibraryRoot') {
+    window.electronAPI?.openLibraryFolder?.('');
+  }
+}
+
+function openAppContextMenu(e) {
+  const mode = getImportMode();
+  contextMenuTargetIds = [];
+  renderContextMenu(e, [
+    { label: (mode === 'move' ? '✓ ' : '') + '导入时移动原文件到资源文件夹', action: 'importMove' },
+    { label: (mode === 'copy' ? '✓ ' : '') + '导入时复制，原文件保留在原处', action: 'importCopy' },
+    { separator: true },
+    { label: '打开软件资源文件夹', action: 'openLibraryRoot' }
+  ], { type: 'app' });
 }
 
 function openContextMenu(e, ids) {
-  const menu = $('#contextMenu');
   const targets = ids
     .map((id) => state.items.find((i) => i.id === id))
     .filter(Boolean);
   if (!targets.length) return;
 
   contextMenuTargetIds = ids;
-  contextMenuContext = { type: 'items', ids };
   const single = targets.length === 1 ? targets[0] : null;
   const isNote = single && single.type === 'note';
   const ipcReady = Boolean(window.electronAPI?.copyImage);
@@ -1456,20 +1642,7 @@ function openContextMenu(e, ids) {
     danger: true
   });
 
-  menu.innerHTML = rows.map((row) => {
-    if (row.separator) return '<div class="context-menu__separator"></div>';
-    const tip = row.tip ? ` title="${escapeHtml(row.tip)}"` : '';
-    return `<button type="button" data-action="${row.action}"${row.disabled ? ' disabled' : ''}${row.danger ? ' class="danger"' : ''}${tip}>${row.label}</button>`;
-  }).join('');
-
-  menu.hidden = false;
-
-  // 定位：防止溢出屏幕
-  const rect = menu.getBoundingClientRect();
-  const x = Math.min(e.clientX, window.innerWidth - rect.width - 8);
-  const y = Math.min(e.clientY, window.innerHeight - rect.height - 8);
-  menu.style.left = `${Math.max(4, x)}px`;
-  menu.style.top = `${Math.max(4, y)}px`;
+  renderContextMenu(e, rows, { type: 'items', ids });
 }
 
 const META_COLLAPSED_KEY = 'memorie.metaCollapsed';
@@ -1533,11 +1706,31 @@ function restorePanelFoldState() {
   setPanelFold('list', Boolean(saved.list), false);
 }
 
-function showToast(message) {
+function showToast(message, { action = null, duration = 2200 } = {}) {
   const toast = $('#toast');
-  toast.textContent = message;
+  toast.textContent = '';
+
+  const text = document.createElement('span');
+  text.className = 'toast__text';
+  text.textContent = message;
+  toast.appendChild(text);
+
+  if (action) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast__action';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => {
+      clearTimeout(showToast.timer);
+      toast.classList.remove('is-visible');
+      if (typeof action.onAction === 'function') action.onAction();
+    });
+    toast.appendChild(btn);
+  }
+
   toast.classList.add('is-visible');
-  setTimeout(() => toast.classList.remove('is-visible'), 2200);
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => toast.classList.remove('is-visible'), duration);
 }
 
 function confirmDelete({ title = '确认删除？', message = '此操作无法撤销。', confirmText = '删除' } = {}) {
@@ -2069,6 +2262,7 @@ function renderMusicList() {
         <span class="music-row__sub">${escapeHtml(item.category || formatFileSize(item.size || 0))}</span>
       </span>
       <span class="music-row__dur">${formatTime(item.duration || 0)}</span>
+      <button type="button" class="music-row__more" data-more="${item.id}" title="更多操作" aria-label="更多操作">⋯</button>
     </li>`;
   }).join('');
 
@@ -2082,6 +2276,14 @@ function renderMusicList() {
       e.stopPropagation();
       openContextMenu(e, [row.dataset.id]);
     });
+
+    const moreBtn = row.querySelector('.music-row__more');
+    if (moreBtn) {
+      moreBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openContextMenu(e, [row.dataset.id]);
+      });
+    }
   });
 }
 
@@ -2169,6 +2371,13 @@ function initEvents() {
   $('#newFolderBtn').addEventListener('click', () => createGroup());
   $('#newNoteBtn').addEventListener('click', () => createNote());
 
+  // 添加媒体：首次导入先说明"文件会去哪 + 移动还是复制"
+  $('#addMediaBtn').addEventListener('click', async (e) => {
+    if (hasImportMode()) return; // 已经选过，直接走 <label> 的默认行为
+    e.preventDefault();
+    if (await ensureImportModeChosen()) $('#fileInput').click();
+  });
+
   $('#fileInput').addEventListener('change', (e) => {
     if (e.target.files.length) {
       addFiles(Array.from(e.target.files));
@@ -2216,8 +2425,18 @@ function initEvents() {
     const btn = e.target.closest('button[data-action]');
     if (!btn || btn.disabled) return;
     const action = btn.dataset.action;
-    if (contextMenuContext && contextMenuContext.type === 'group') handleGroupContextAction(action);
+    const type = contextMenuContext ? contextMenuContext.type : 'items';
+    if (type === 'group') handleGroupContextAction(action);
+    else if (type === 'app') handleAppContextAction(action);
     else handleContextAction(action);
+  });
+  // 菜单键盘导航
+  document.addEventListener('keydown', onContextMenuKeydown);
+
+  // 工具栏「⋯」：导入方式 / 打开资源文件夹
+  $('#moreMenuBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openAppContextMenu(e);
   });
   document.addEventListener('click', (e) => {
     const menu = $('#contextMenu');

@@ -211,7 +211,8 @@ function moveFileInto(sourcePath, target) {
 }
 
 // 把文件放进"该分组对应的子文件夹"，返回库内新路径
-ipcMain.handle('place-media-file', (event, { id, sourcePath, group }) => {
+// mode: 'move'（默认，移动原文件）| 'copy'（复制一份，原文件留在原处）
+ipcMain.handle('place-media-file', (event, { id, sourcePath, group, mode }) => {
   try {
     if (!sourcePath || !fs.existsSync(sourcePath)) {
       return { ok: false, error: '文件不存在' };
@@ -224,8 +225,33 @@ ipcMain.handle('place-media-file', (event, { id, sourcePath, group }) => {
       return { ok: true, path: target, unchanged: true };
     }
     if (fs.existsSync(target)) fs.unlinkSync(target);
+
+    if (mode === 'copy') {
+      fs.copyFileSync(sourcePath, target);
+      return { ok: true, path: target, copied: true };
+    }
     moveFileInto(sourcePath, target);
     return { ok: true, path: target };
+  } catch (err) {
+    return { ok: false, error: String(err && err.message || err) };
+  }
+});
+
+// 撤销导入：把库内文件挪回原位（供 toast 上的"撤销"使用）
+ipcMain.handle('undo-import-files', (event, { items }) => {
+  try {
+    let restored = 0;
+    let failed = 0;
+    for (const entry of (items || [])) {
+      const from = entry && entry.libraryPath;
+      const to = entry && entry.originalPath;
+      if (!from || !to || !fs.existsSync(from)) { failed++; continue; }
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      if (fs.existsSync(to)) fs.unlinkSync(to);
+      moveFileInto(from, to);
+      restored++;
+    }
+    return { ok: true, restored, failed };
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) };
   }

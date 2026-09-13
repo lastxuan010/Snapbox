@@ -401,16 +401,37 @@ body {
   font-weight: 600;
 }
 
-.folder-item__actions {
-  display: flex;
-  gap: 2px;
+/* 分组行尾的"更多操作"入口（hover / 键盘聚焦时出现） */
+.folder-item__more {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--foreground-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s ease;
-  flex-shrink: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
 
-.folder-item:hover .folder-item__actions {
+.folder-item:hover .folder-item__more,
+.folder-item:focus-within .folder-item__more,
+.folder-item.is-active .folder-item__more {
   opacity: 1;
+  pointer-events: auto;
+}
+
+.folder-item__more:hover {
+  background: var(--accent-soft);
+  color: var(--primary);
 }
 
 /* Buttons */
@@ -654,7 +675,7 @@ body {
 .thumb-card__badge {
   position: absolute;
   top: 6px;
-  right: 6px;
+  left: 6px;
   width: 20px;
   height: 20px;
   display: grid;
@@ -663,6 +684,40 @@ body {
   border-radius: 50%;
   font-size: 9px;
   color: var(--primary-foreground);
+}
+
+/* 卡片右上角的"更多操作"入口（hover / 键盘聚焦时出现） */
+.thumb-card__more {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(29, 29, 31, 0.62);
+  color: #fff;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+
+.thumb-card:hover .thumb-card__more,
+.thumb-card:focus-within .thumb-card__more,
+.thumb-card.is-active .thumb-card__more {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.thumb-card__more:hover {
+  background: var(--primary);
 }
 
 /* 链接态（未导入）徽标：灰色以示区别 */
@@ -935,7 +990,11 @@ body {
   bottom: 28px;
   left: 50%;
   transform: translateX(-50%) translateY(20px);
-  padding: 11px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(760px, calc(100vw - 80px));
+  padding: 11px 16px 11px 20px;
   background: rgba(29, 29, 31, 0.92);
   border-radius: var(--radius-pill);
   color: #fff;
@@ -948,6 +1007,28 @@ body {
   box-shadow: var(--shadow-md);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+}
+
+.toast__text {
+  min-width: 0;
+}
+
+.toast__action {
+  flex: none;
+  padding: 4px 12px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.toast__action:hover {
+  background: rgba(255, 255, 255, 0.32);
 }
 
 .toast.is-visible {
@@ -992,7 +1073,32 @@ body {
   gap: 6px;
 }
 
-.toolbar__actions .panel-fold {
+/* 工具栏「⋯」更多选项 */
+.toolbar-more {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--foreground-secondary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.toolbar-more:hover {
+  background: var(--accent-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.toolbar__actions .toolbar-more {
   margin-left: auto;
 }
 
@@ -1280,6 +1386,8 @@ body {
   font-size: 13px;
   line-height: 1.5;
   color: var(--foreground-secondary);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
 .confirm-dialog__actions {
@@ -1335,6 +1443,11 @@ body {
 
 .context-menu button:hover:not(:disabled) {
   background: var(--secondary);
+}
+
+.context-menu button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
 }
 
 .context-menu button:disabled {
@@ -2132,6 +2245,38 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 11px;
   color: var(--foreground-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+.music-row__more {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.music-row:hover .music-row__more,
+.music-row:focus-within .music-row__more,
+.music-row.is-playing .music-row__more {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.music-row__more:hover {
+  background: var(--accent-soft);
+  color: var(--primary);
 }
 
 /* 右栏音频信息 */

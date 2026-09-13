@@ -38,7 +38,7 @@
         <div class="panel panel--left">
           <div class="toolbar">
             <div class="toolbar__actions">
-              <label class="btn btn--primary">
+              <label class="btn btn--primary" id="addMediaBtn">
                 <input type="file" id="fileInput" multiple accept="image/*,video/*,audio/*" hidden>
                 <span class="btn__icon">+</span>
                 <span class="btn__text">添加媒体</span>
@@ -47,6 +47,7 @@
                 <span class="btn__icon">✎</span>
                 <span class="btn__text">新建笔记</span>
               </button>
+              <button type="button" class="toolbar-more" id="moreMenuBtn" title="更多选项" aria-label="更多选项">⋯</button>
               <button type="button" class="panel-fold" id="foldListBtn" title="收起列表栏" aria-label="收起列表栏">‹</button>
             </div>
             <div class="search-box">
@@ -59,6 +60,7 @@
             <button class="filter-chip is-active" data-filter="all">全部</button>
             <button class="filter-chip" data-filter="image">图片</button>
             <button class="filter-chip" data-filter="video">视频</button>
+            <button class="filter-chip" data-filter="audio">音频</button>
             <button class="filter-chip" data-filter="note">笔记</button>
           </div>
 

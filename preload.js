@@ -25,7 +25,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 把库内备份（data URL）落盘为真实文件，返回其路径
   ensureBackup: (id, dataUrl) => ipcRenderer.invoke('ensure-backup', { id, dataUrl }),
   // 把文件放进"该分组对应的资源子文件夹"（group 为空 → library 根目录），返回库内新路径
-  placeMediaFile: (id, sourcePath, group) => ipcRenderer.invoke('place-media-file', { id, sourcePath, group }),
+  // mode: 'move' | 'copy'
+  placeMediaFile: (id, sourcePath, group, mode) => ipcRenderer.invoke('place-media-file', { id, sourcePath, group, mode }),
+  // 撤销导入：把库内文件挪回原位
+  undoImportFiles: (items) => ipcRenderer.invoke('undo-import-files', { items }),
   // 在资源管理器中打开某个分组的文件夹
   openLibraryFolder: (group) => ipcRenderer.invoke('open-library-folder', { group }),
   // 清理 library 下的空文件夹
