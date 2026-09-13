@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+
+# 打包产物
+dist/
+out/
+build/
+
+# 运行 / 调试日志
+*.log
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+
+# 开发期临时脚本（验证/诊断用完即删）
+_verify_*.js
+_verify_*.log
+_diag_*.js
+_diag_*.log

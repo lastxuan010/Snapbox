@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Memorie 回忆匣</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-window" id="app">
+    <header class="titlebar">
+      <div class="titlebar__brand">
+        <span class="titlebar__logo">◆</span>
+        <span class="titlebar__title">Memorie</span>
+      </div>
+      <div class="titlebar__controls">
+        <button class="titlebar__btn" aria-label="最小化">−</button>
+        <button class="titlebar__btn" aria-label="最大化">□</button>
+        <button class="titlebar__btn titlebar__btn--close" aria-label="关闭">×</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="folder-sidebar">
+        <div class="folder-sidebar__header">
+          <span class="folder-sidebar__title">分组</span>
+          <div class="folder-sidebar__actions">
+            <button class="btn btn--sm" id="newFolderBtn" title="新建分组">
+              <span class="btn__icon">+</span>
+            </button>
+            <button type="button" class="panel-fold" id="foldFoldersBtn" title="收起分组栏" aria-label="收起分组栏">‹</button>
+          </div>
+        </div>
+        <div class="folder-list folder-list--vertical" id="folderList"></div>
+      </aside>
+
+      <aside class="sidebar">
+        <div class="panel panel--left">
+          <div class="toolbar">
+            <div class="toolbar__actions">
+              <label class="btn btn--primary">
+                <input type="file" id="fileInput" multiple accept="image/*,video/*,audio/*" hidden>
+                <span class="btn__icon">+</span>
+                <span class="btn__text">添加媒体</span>
+              </label>
+              <button class="btn btn--secondary" id="newNoteBtn">
+                <span class="btn__icon">✎</span>
+                <span class="btn__text">新建笔记</span>
+              </button>
+              <button type="button" class="panel-fold" id="foldListBtn" title="收起列表栏" aria-label="收起列表栏">‹</button>
+            </div>
+            <div class="search-box">
+              <input type="text" id="searchInput" placeholder="搜索..." class="search-box__input">
+              <span class="search-box__icon">⌕</span>
+            </div>
+          </div>
+
+          <div class="filter-bar">
+            <button class="filter-chip is-active" data-filter="all">全部</button>
+            <button class="filter-chip" data-filter="image">图片</button>
+            <button class="filter-chip" data-filter="video">视频</button>
+            <button class="filter-chip" data-filter="note">笔记</button>
+          </div>
+
+          <div class="batch-bar" id="batchBar" hidden>
+            <span class="batch-bar__count" id="batchCount">已选 0 项</span>
+            <div class="batch-bar__actions">
+              <button class="btn btn--sm btn--primary" id="batchImportBtn">导入到库</button>
+              <button class="btn btn--sm btn--ghost" id="batchCancelBtn">取消选择</button>
+            </div>
+          </div>
+
+          <div class="thumb-grid" id="thumbGrid">
+            <div class="empty-state" id="emptyState">
+              <div class="empty-state__icon">◫</div>
+              <p>暂无媒体文件</p>
+              <p class="empty-state__hint">点击上方按钮导入图片或视频</p>
+            </div>
+          </div>
+
+          <div class="music-view" id="musicView" hidden>
+            <ul class="music-list" id="musicList"></ul>
+          </div>
+
+          <div class="statusbar">
+            <span id="statusCount">0 个项目</span>
+            <span id="statusType">—</span>
+          </div>
+        </div>
+      </aside>
+
+      <section class="viewer">
+        <div class="panel panel--right" id="previewPanel">
+          <div class="preview-stage" id="previewStage">
+                <div class="preview-placeholder">
+                  <img class="preview-placeholder__art" src="assets/empty-preview.png" alt="">
+                  <p>选择一个项目查看详情</p>
+                </div>
+              </div>
+              <div class="note-preview" id="notePreview" hidden></div>
+
+          <div class="meta-panel" id="metaPanel" hidden>
+            <div class="meta-header">
+              <h2 class="meta-header__title" id="metaName">未命名</h2>
+              <button class="btn btn--ghost btn--sm meta-collapse-btn" id="metaCollapseBtn" type="button" title="收起编辑栏">⌄</button>
+              <div class="meta-header__actions">
+                <button class="btn btn--secondary" type="button" id="importBtn" hidden>导入到库</button>
+                <button class="btn btn--primary" type="submit" form="metaForm" id="saveBtn">保存</button>
+                <button class="btn btn--primary" type="button" id="editNoteBtn" hidden>编辑笔记</button>
+                <button class="btn btn--danger btn--ghost" type="button" id="deleteBtn">删除</button>
+              </div>
+            </div>
+
+            <form class="meta-form" id="metaForm">
+              <div class="field-row">
+                <label class="field">
+                  <span class="field__label">时间</span>
+                  <input type="datetime-local" class="field__input" id="metaTime" required>
+                </label>
+                <label class="field">
+                  <span class="field__label">类别</span>
+                  <input type="text" class="field__input" id="metaCategory" list="categoryList" placeholder="例如：风景 / 人物 / 素材">
+                  <datalist id="categoryList">
+                    <option value="风景">
+                    <option value="人物">
+                    <option value="素材">
+                    <option value="截图">
+                    <option value="设计稿">
+                    <option value="其他">
+                  </datalist>
+                </label>
+              </div>
+              <label class="field">
+                <span class="field__label">所在分组</span>
+                <select class="field__input" id="metaGroup"></select>
+              </label>
+              <label class="field field--markdown">
+                <span class="field__label">
+                  <span id="metaDescLabel">简介</span>
+                  <button type="button" class="btn btn--sm btn--ghost markdown-mode-btn" id="markdownModeBtn" hidden>预览</button>
+                </span>
+                <textarea class="field__input field__input--textarea" id="metaDesc" rows="5" placeholder="写下关于这张图片或视频的备注..."></textarea>
+                <div class="markdown-preview-box" id="markdownPreviewBox" hidden></div>
+              </label>
+              <div class="field-row field-row--info">
+                <span class="file-info" id="fileInfo">—</span>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn--primary">
+                  <span class="btn__icon">✓</span>
+                  <span class="btn__text">保存信息</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="music-bar" id="musicBar" hidden>
+      <div class="music-bar__now">
+        <div class="music-bar__cover" id="musicCover">♪</div>
+        <div class="music-bar__meta">
+          <div class="music-bar__title" id="musicTitle">未播放</div>
+          <div class="music-bar__sub" id="musicSub">—</div>
+        </div>
+      </div>
+
+      <div class="music-bar__center">
+        <div class="music-bar__controls">
+          <button type="button" class="music-bar__btn" id="musicPrev" title="上一首">‹</button>
+          <button type="button" class="music-bar__btn music-bar__btn--play" id="musicPlay" title="播放 / 暂停">▶</button>
+          <button type="button" class="music-bar__btn" id="musicNext" title="下一首">›</button>
+        </div>
+        <div class="music-bar__progress">
+          <span class="music-bar__time" id="musicCur">0:00</span>
+          <input type="range" class="music-bar__range" id="musicSeek" min="0" max="1000" value="0" step="1" aria-label="播放进度">
+          <span class="music-bar__time" id="musicDur">0:00</span>
+        </div>
+      </div>
+
+      <div class="music-bar__right">
+        <button type="button" class="music-bar__btn music-bar__btn--text" id="musicMode" title="切换播放模式">列表循环</button>
+        <span class="music-bar__label">音量</span>
+        <input type="range" class="music-bar__range music-bar__range--vol" id="musicVolume" min="0" max="100" value="100" step="1" aria-label="音量">
+      </div>
+    </div>
+
+    <audio id="musicAudio" preload="metadata"></audio>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <div class="context-menu" id="contextMenu" hidden></div>
+
+  <div class="confirm-overlay" id="choiceOverlay" hidden>
+    <div class="confirm-dialog" role="alertdialog" aria-modal="true">
+      <h3 class="confirm-dialog__title" id="choiceTitle">删除？</h3>
+      <p class="confirm-dialog__message" id="choiceMessage"></p>
+      <div class="confirm-dialog__actions confirm-dialog__actions--stack">
+        <button class="btn btn--danger" id="choiceBtnA">仅从软件移除</button>
+        <button class="btn btn--secondary" id="choiceBtnB">移除并删除原文件</button>
+        <button class="btn btn--ghost" id="choiceBtnC">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="confirm-overlay" id="confirmOverlay" hidden>
+    <div class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+      <h3 class="confirm-dialog__title" id="confirmTitle">确认删除？</h3>
+      <p class="confirm-dialog__message" id="confirmMessage">此操作无法撤销。</p>
+      <div class="confirm-dialog__actions">
+        <button class="btn btn--secondary" id="confirmCancelBtn">取消</button>
+        <button class="btn btn--danger" id="confirmDeleteBtn">删除</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="note-editor-overlay" id="noteEditorOverlay" hidden>
+    <div class="note-editor-page">
+      <header class="note-editor__header">
+        <div class="note-editor__header-left">
+          <button class="btn btn--ghost" id="closeNoteEditorBtn">
+            <span class="btn__icon">←</span>
+            <span class="btn__text">返回</span>
+          </button>
+          <h2 class="note-editor__title">编辑笔记</h2>
+        </div>
+        <div class="note-editor__win-controls">
+          <button type="button" class="win-dot" id="noteMinBtn" title="最小化" aria-label="最小化">−</button>
+          <button type="button" class="win-dot" id="noteMaxBtn" title="最大化 / 还原" aria-label="最大化或还原">□</button>
+          <button type="button" class="win-dot win-dot--close" id="noteCloseBtn" title="关闭" aria-label="关闭">×</button>
+        </div>
+      </header>
+      <div class="note-editor__toolbar" id="noteToolbar">
+        <button type="button" data-cmd="undo" title="撤销 (Ctrl+Z)">↶</button>
+        <button type="button" data-cmd="redo" title="重做 (Ctrl+Y)">↷</button>
+        <span class="toolbar-sep"></span>
+        <button type="button" data-cmd="bold" title="加粗"><b>B</b></button>
+        <button type="button" data-cmd="italic" title="斜体"><i>I</i></button>
+        <button type="button" data-cmd="underline" title="下划线"><u>U</u></button>
+        <button type="button" data-cmd="strike" title="删除线"><s>S</s></button>
+        <span class="toolbar-sep"></span>
+        <button type="button" data-cmd="h1" title="一级标题">H1</button>
+        <button type="button" data-cmd="h2" title="二级标题">H2</button>
+        <button type="button" data-cmd="h3" title="三级标题">H3</button>
+        <span class="toolbar-sep"></span>
+        <button type="button" data-cmd="code" title="行内代码">‹›</button>
+        <span class="toolbar-sep"></span>
+        <div class="insert-wrap" id="insertWrap">
+          <button type="button" id="insertBtn" title="插入">⊕ 插入 ▾</button>
+          <div class="insert-menu" id="insertMenu" hidden>
+            <button type="button" data-insert="table">⊞ 表格</button>
+            <button type="button" data-insert="link">链接</button>
+            <button type="button" data-insert="image">图片</button>
+            <button type="button" data-insert="codeblock">代码块</button>
+            <button type="button" data-insert="quote">引用</button>
+            <button type="button" data-insert="hr">分隔线</button>
+            <button type="button" data-insert="formula" disabled title="公式支持即将上线">公式</button>
+          </div>
+        </div>
+        <span class="toolbar-sep"></span>
+        <button type="button" data-cmd="clear" title="清除格式">✕</button>
+        <span class="toolbar-sep"></span>
+        <button type="button" data-level="h1" title="设为目录（一级标题）">目录</button>
+        <button type="button" data-level="h2" title="设为子目录（二级标题）">子目录</button>
+        <div class="note-find" id="noteFind">
+          <span class="note-find__icon">⌕</span>
+          <input type="text" class="note-find__input" id="noteFindInput" placeholder="搜索笔记内容…" autocomplete="off" spellcheck="false">
+          <span class="note-find__count" id="noteFindCount"></span>
+          <button type="button" class="note-find__nav" id="noteFindPrev" title="上一个 (Shift+Enter)">‹</button>
+          <button type="button" class="note-find__nav" id="noteFindNext" title="下一个 (Enter)">›</button>
+        </div>
+      </div>
+      <div class="note-editor__body note-editor__body--single">
+        <div class="note-editor__editor">
+          <div class="note-editor__rich" id="noteEditorRich" contenteditable="true" data-placeholder="在这里输入内容…"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="insertImageInput" multiple accept="image/*" hidden>
+
+  <div class="sel-toolbar" id="selToolbar" hidden>
+    <button type="button" data-cmd="bold" title="加粗"><b>B</b></button>
+    <button type="button" data-cmd="italic" title="斜体"><i>I</i></button>
+    <button type="button" data-cmd="underline" title="下划线"><u>U</u></button>
+    <button type="button" data-cmd="strike" title="删除线"><s>S</s></button>
+    <span class="sel-toolbar__sep"></span>
+    <button type="button" data-cmd="clear" title="清除格式">✕</button>
+  </div>
+
+  <div class="link-dialog-overlay" id="linkDialogOverlay" hidden>
+    <div class="link-dialog">
+      <h4 class="link-dialog__title">插入链接</h4>
+      <label class="link-dialog__row">
+        <span>文本</span>
+        <input type="text" id="linkText" placeholder="请输入文本">
+      </label>
+      <label class="link-dialog__row">
+        <span>链接</span>
+        <input type="text" id="linkUrl" placeholder="请输入或粘贴链接">
+      </label>
+      <div class="link-dialog__actions">
+        <button type="button" class="btn btn--secondary" id="linkCancelBtn">取消</button>
+        <button type="button" class="btn btn--primary" id="linkConfirmBtn" disabled>确认</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
