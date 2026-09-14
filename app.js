@@ -1643,6 +1643,121 @@ function installVideoFullscreenIntercept() {
   });
 }
 
+// 大播放器的尺寸记忆 + 边框拖拽伸缩
+const THEATER_SIZE_KEY = 'memorie.theaterSize';
+const THEATER_MIN_W = 420;
+const THEATER_MIN_H = 280;
+
+function applyTheaterSize() {
+  const page = $('.theater-page');
+  if (!page) return;
+  page.classList.remove('is-floating');
+  page.style.left = '';
+  page.style.top = '';
+
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(THEATER_SIZE_KEY) || 'null');
+  } catch (_) { /* 数据坏了就用默认尺寸 */ }
+
+  if (saved && saved.w && saved.h) {
+    // 窗口比记录的小时按窗口收一下
+    page.style.width = Math.min(saved.w, window.innerWidth - 24) + 'px';
+    page.style.height = Math.min(saved.h, window.innerHeight - 24) + 'px';
+  } else {
+    page.style.width = '';
+    page.style.height = '';
+  }
+}
+
+function initTheaterResize() {
+  const page = $('.theater-page');
+  const overlay = $('#theaterOverlay');
+  if (!page || !overlay || page.__resizeReady) return;
+  page.__resizeReady = true;
+
+  for (const dir of ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se']) {
+    const handle = document.createElement('div');
+    handle.className = 'theater-page__resize';
+    handle.dataset.dir = dir;
+    page.appendChild(handle);
+  }
+
+  let drag = null;
+
+  page.addEventListener('pointerdown', (e) => {
+    const handle = e.target.closest('.theater-page__resize');
+    if (!handle) return;
+    e.preventDefault();
+
+    // 先切到绝对定位再量尺寸，避免入场缩放动画影响基准值
+    page.classList.add('is-floating');
+    const rect = page.getBoundingClientRect();
+    page.style.width = rect.width + 'px';
+    page.style.height = rect.height + 'px';
+    page.style.left = rect.left + 'px';
+    page.style.top = rect.top + 'px';
+
+    drag = { dir: handle.dataset.dir, startX: e.clientX, startY: e.clientY, rect };
+    overlay.classList.add('is-resizing');
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch (_) { /* 合成事件没有真实 pointerId */ }
+  });
+
+  page.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    e.preventDefault();
+
+    const dir = drag.dir;
+    const { rect } = drag;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    const maxW = window.innerWidth - 8;
+    const maxH = window.innerHeight - 8;
+
+    let left = rect.left;
+    let top = rect.top;
+    let width = rect.width;
+    let height = rect.height;
+
+    if (dir.includes('e')) width = Math.min(maxW, Math.max(THEATER_MIN_W, rect.width + dx));
+    if (dir.includes('s')) height = Math.min(maxH, Math.max(THEATER_MIN_H, rect.height + dy));
+    if (dir.includes('w')) {
+      width = Math.min(maxW, Math.max(THEATER_MIN_W, rect.width - dx));
+      left = rect.left + (rect.width - width);
+    }
+    if (dir.includes('n')) {
+      height = Math.min(maxH, Math.max(THEATER_MIN_H, rect.height - dy));
+      top = rect.top + (rect.height - height);
+    }
+
+    // 别拖出窗口
+    left = Math.max(4, Math.min(left, window.innerWidth - width - 4));
+    top = Math.max(4, Math.min(top, window.innerHeight - height - 4));
+
+    page.style.width = Math.round(width) + 'px';
+    page.style.height = Math.round(height) + 'px';
+    page.style.left = Math.round(left) + 'px';
+    page.style.top = Math.round(top) + 'px';
+  });
+
+  const endDrag = () => {
+    if (!drag) return;
+    drag = null;
+    overlay.classList.remove('is-resizing');
+    try {
+      localStorage.setItem(THEATER_SIZE_KEY, JSON.stringify({
+        w: Math.round(parseFloat(page.style.width)),
+        h: Math.round(parseFloat(page.style.height))
+      }));
+    } catch (_) { /* 存不下就算了 */ }
+  };
+
+  page.addEventListener('pointerup', endDrag);
+  page.addEventListener('pointercancel', endDrag);
+}
+
 async function openTheater(item, fromVideo) {
   const overlay = $('#theaterOverlay');
   if (!overlay || !item) return;
@@ -1658,6 +1773,7 @@ async function openTheater(item, fromVideo) {
   const wasPlaying = fromVideo ? !fromVideo.paused : false;
   if (fromVideo) fromVideo.pause();
 
+  applyTheaterSize();
   $('#theaterTitle').textContent = item.name || '视频';
   const stage = $('#theaterStage');
   stage.innerHTML = '';
@@ -3366,6 +3482,7 @@ async function init() {
   state.items = await loadItems();
   state.groups = await loadGroups();
   installVideoFullscreenIntercept();
+  initTheaterResize();
   renderFolders();
   renderGrid();
   initEvents();

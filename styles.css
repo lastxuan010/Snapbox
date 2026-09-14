@@ -1590,8 +1590,9 @@ body {
 }
 
 .theater-page {
-  width: min(1080px, 92vw);
-  height: min(720px, 88vh);
+  position: relative;
+  width: min(1500px, 96vw);
+  height: min(940px, 94vh);
   display: flex;
   flex-direction: column;
   background: var(--background-solid);
@@ -1601,6 +1602,83 @@ body {
   overflow: hidden;
   transform: scale(0.97);
   transition: transform 0.2s ease;
+}
+
+/* 用户拖动过边框后改为绝对定位，按鼠标坐标自由伸缩 */
+.theater-page.is-floating {
+  position: absolute;
+  transform: none;
+  transition: none;
+}
+
+/* 四边 + 四角的伸缩热区 */
+.theater-page__resize {
+  position: absolute;
+  z-index: 3;
+}
+
+.theater-page__resize[data-dir="n"] {
+  top: 0;
+  left: 14px;
+  right: 56px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.theater-page__resize[data-dir="s"] {
+  bottom: 0;
+  left: 14px;
+  right: 14px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.theater-page__resize[data-dir="w"] {
+  left: 0;
+  top: 14px;
+  bottom: 14px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.theater-page__resize[data-dir="e"] {
+  right: 0;
+  top: 14px;
+  bottom: 14px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.theater-page__resize[data-dir="nw"] {
+  top: 0;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+}
+
+.theater-page__resize[data-dir="ne"] {
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nesw-resize;
+}
+
+.theater-page__resize[data-dir="sw"] {
+  bottom: 0;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nesw-resize;
+}
+
+.theater-page__resize[data-dir="se"] {
+  bottom: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
 }
 
 .theater-overlay.is-visible .theater-page {
@@ -1667,15 +1745,11 @@ body {
   background: #000;
 }
 
-.theater-page__hint {
-  flex: none;
-  margin: 0;
-  padding: 8px 16px;
-  font-size: 11px;
-  color: var(--foreground-secondary);
-  text-align: center;
-  background: var(--background-secondary);
-  border-top: 1px solid var(--border);
+/* 拖拽伸缩时禁止选中文字、保持光标 */
+.theater-overlay.is-resizing,
+.theater-overlay.is-resizing * {
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .note-editor-page {
