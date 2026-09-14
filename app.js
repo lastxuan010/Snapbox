@@ -286,6 +286,134 @@ async function relocateItemsFiles(items) {
   return moved;
 }
 
+// ===== 整理资源：把所有资源文件归入"各自分组对应的文件夹" =====
+// auto = true 时用于首次升级后自动跑一次（没有变化就静默结束）
+async function organizeLibrary(auto = false) {
+  const targets = state.items.filter((i) => i.type !== 'note');
+  if (!targets.length) {
+    if (!auto) showToast('还没有可整理的资源');
+    return 0;
+  }
+
+  const steps = [];
+  const mode = getImportMode();
+  let moved = 0;
+  let written = 0;
+  let pulled = 0;
+  let kept = 0;
+  let failed = 0;
+
+  for (const item of targets) {
+    const folder = itemGroupFolder(item);
+
+    // 1) 库内文件：挪进分组文件夹
+    if (item.backupPath) {
+      const res = await window.electronAPI?.placeMediaFile?.(item.id, item.backupPath, folder);
+      if (res && res.ok) {
+        if (res.path !== item.backupPath) {
+          steps.push({ kind: 'move', id: item.id, from: item.backupPath, to: res.path });
+          item.backupPath = res.path;
+          await saveItem(item);
+          moved++;
+        } else {
+          kept++;
+        }
+      } else {
+        failed++;
+      }
+      continue;
+    }
+
+    // 2) 只有内嵌数据（老导入方式）：落盘到分组文件夹
+    if (item.dataURL) {
+      const res = await window.electronAPI?.ensureBackup?.(item.id, item.dataURL, folder);
+      if (res && res.ok) {
+        steps.push({ kind: 'materialize', id: item.id, to: res.path });
+        item.backupPath = res.path;
+        await saveItem(item);
+        written++;
+      } else {
+        failed++;
+      }
+      continue;
+    }
+
+    // 3) 只有外部原路径：按当前导入方式收进库
+    if (item.sourcePath) {
+      const res = await window.electronAPI?.placeMediaFile?.(item.id, item.sourcePath, folder, mode);
+      if (res && res.ok) {
+        steps.push({ kind: 'import', id: item.id, from: item.sourcePath, to: res.path, mode });
+        item.backupPath = res.path;
+        if (mode !== 'copy') item.sourcePath = '';
+        await saveItem(item);
+        pulled++;
+      } else {
+        failed++;
+      }
+      continue;
+    }
+
+    failed++;
+  }
+
+  window.electronAPI?.pruneLibraryFolders?.();
+  renderFolders();
+  renderGrid();
+
+  const changed = moved + written + pulled;
+  if (auto && !changed) return 0;
+
+  const parts = [];
+  if (moved) parts.push(`${moved} 个文件已移入各自分组文件夹`);
+  if (written) parts.push(`${written} 个内嵌数据已落盘`);
+  if (pulled) parts.push(`${pulled} 个原文件已收入资源文件夹`);
+  if (kept) parts.push(`${kept} 个已在正确位置`);
+  if (failed) parts.push(`${failed} 个未能处理`);
+  if (!parts.length) parts.push('所有资源都已在各自分组文件夹里');
+
+  showToast(parts.join('，'), {
+    duration: 9000,
+    action: steps.length ? { label: '撤销', onAction: () => undoOrganize(steps) } : null
+  });
+  return changed;
+}
+
+// 撤销整理：文件与记录一起回滚
+async function undoOrganize(steps) {
+  const moves = [];
+  for (const step of steps) {
+    if (step.kind === 'move' || (step.kind === 'import' && step.mode !== 'copy')) {
+      moves.push({ libraryPath: step.to, originalPath: step.from });
+    }
+  }
+  if (moves.length) await window.electronAPI?.undoImportFiles?.(moves);
+
+  for (const step of steps) {
+    if (step.kind === 'materialize' || (step.kind === 'import' && step.mode === 'copy')) {
+      await window.electronAPI?.trashFile?.(step.to);
+    }
+  }
+
+  for (const step of steps) {
+    const item = state.items.find((i) => i.id === step.id);
+    if (!item) continue;
+    if (step.kind === 'move') {
+      item.backupPath = step.from;
+    } else if (step.kind === 'materialize') {
+      item.backupPath = '';
+    } else if (step.kind === 'import') {
+      item.sourcePath = step.from;
+      item.backupPath = '';
+    }
+    await saveItem(item);
+  }
+
+  window.electronAPI?.pruneLibraryFolders?.();
+  renderFolders();
+  renderGrid();
+  showToast('已撤销整理，文件已回到原位');
+}
+
 function getGroupName(groupId) {
   if (groupId === 'all') return '全部';
   if (groupId === 'ungrouped') return getUngroupedName();
@@ -314,6 +442,7 @@ function countItemsInGroup(groupId) {
 // ===== 导入方式设置：move（默认，移动原文件）| copy（复制，保留原文件）=====
 const IMPORT_MODE_KEY = 'memorie.importMode';
 const HINT_MORE_KEY = 'memorie.hint.moreMenu';
+const ORGANIZED_KEY = 'memorie.organizedOnce';
 
 function getImportMode() {
   return localStorage.getItem(IMPORT_MODE_KEY) === 'copy' ? 'copy' : 'move';
@@ -671,7 +800,9 @@ function startRenameGroup(groupId) {
 
     if (groupId === 'ungrouped') {
       setUngroupedName(newName);
+      await window.electronAPI?.ensureGroupFolder?.(newName);
       await relocateItemsFiles(state.items.filter((i) => !i.groupId));
+      await window.electronAPI?.pruneLibraryFolders?.();
       renderFolders();
       renderMetaGroupOptions();
       showToast('未分组已改名，文件已归入新文件夹');
@@ -682,7 +813,9 @@ function startRenameGroup(groupId) {
     if (group && group.name !== newName) {
       group.name = newName;
       await saveGroup(group);
+      await window.electronAPI?.ensureGroupFolder?.(newName);
       await relocateItemsFiles(state.items.filter((i) => i.groupId === groupId));
+      await window.electronAPI?.pruneLibraryFolders?.();
       renderFolders();
       renderMetaGroupOptions();
       showToast('分组已重命名，文件已归入新文件夹');
@@ -710,11 +843,13 @@ async function createGroup(name = '新分组') {
   };
   await saveGroup(group);
   state.groups.push(group);
+  // 建分组的同时就在资源文件夹里建好同名文件夹
+  await window.electronAPI?.ensureGroupFolder?.(group.name);
   state.selectedGroupId = group.id;
   renderFolders();
   renderGrid();
   renderMetaGroupOptions();
-  showToast('分组已创建');
+  showToast('分组已创建，资源文件夹里已建好同名文件夹');
   // 创建后自动进入重命名模式，让用户立即命名
   setTimeout(() => startRenameGroup(group.id), 0);
 }
@@ -1589,6 +1724,10 @@ async function handleAppContextAction(action) {
   }
   if (action === 'openLibraryRoot') {
     window.electronAPI?.openLibraryFolder?.('');
+    return;
+  }
+  if (action === 'organize') {
+    await organizeLibrary();
   }
 }
 
@@ -1599,6 +1738,7 @@ function openAppContextMenu(e) {
     { label: (mode === 'move' ? '✓ ' : '') + '导入时移动原文件到资源文件夹', action: 'importMove' },
     { label: (mode === 'copy' ? '✓ ' : '') + '导入时复制，原文件保留在原处', action: 'importCopy' },
     { separator: true },
+    { label: '整理资源到分组文件夹', action: 'organize' },
     { label: '打开软件资源文件夹', action: 'openLibraryRoot' }
   ], { type: 'app' });
 }
@@ -2659,6 +2799,12 @@ async function init() {
   initEvents();
   restoreMetaPanelState();
   restorePanelFoldState();
+
+  // 该功能上线前导入的资源还在旧位置：首次启动自动整理一次（只跑一次）
+  if (!localStorage.getItem(ORGANIZED_KEY)) {
+    localStorage.setItem(ORGANIZED_KEY, '1');
+    setTimeout(() => { organizeLibrary(true).catch(() => {}); }, 800);
+  }
 }
 
 init().catch((err) => {

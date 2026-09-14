@@ -22,8 +22,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showInExplorer: (filePath) => ipcRenderer.invoke('show-in-explorer', filePath),
   // 把文件移入回收站
   trashFile: (filePath) => ipcRenderer.invoke('trash-file', filePath),
-  // 把库内备份（data URL）落盘为真实文件，返回其路径
-  ensureBackup: (id, dataUrl) => ipcRenderer.invoke('ensure-backup', { id, dataUrl }),
+  // 把库内备份（data URL）落盘为真实文件，返回其路径（group 决定放进哪个分组文件夹）
+  ensureBackup: (id, dataUrl, group) => ipcRenderer.invoke('ensure-backup', { id, dataUrl, group }),
+  // 确保分组文件夹存在
+  ensureGroupFolder: (group) => ipcRenderer.invoke('ensure-group-folder', { group }),
   // 把文件放进"该分组对应的资源子文件夹"（group 为空 → library 根目录），返回库内新路径
   // mode: 'move' | 'copy'
   placeMediaFile: (id, sourcePath, group, mode) => ipcRenderer.invoke('place-media-file', { id, sourcePath, group, mode }),

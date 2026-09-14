@@ -136,7 +136,7 @@ ipcMain.handle('trash-file', async (event, filePath) => {
 
 // 确保库内备份落盘为真实文件（用户数据目录/library/<id>.<ext>），返回路径
 // 已存在则直接返回，实现"首次点击时导出"
-ipcMain.handle('ensure-backup', (event, { id, dataUrl }) => {
+ipcMain.handle('ensure-backup', (event, { id, dataUrl, group }) => {
   try {
     const match = /^data:([^;]+);base64,(.*)$/.exec(dataUrl || '');
     if (!match) return { ok: false, error: 'bad data url' };
@@ -165,8 +165,7 @@ ipcMain.handle('ensure-backup', (event, { id, dataUrl }) => {
       'audio/aiff': '.aiff'
     };
     const ext = extMap[mime] || '.bin';
-    const dir = path.join(app.getPath('userData'), 'library');
-    fs.mkdirSync(dir, { recursive: true });
+    const dir = groupDir(group, true); // 放进该分组对应的文件夹
     const file = path.join(dir, `${id}${ext}`);
     if (!fs.existsSync(file)) fs.writeFileSync(file, buffer);
     return { ok: true, path: file };
@@ -252,6 +251,16 @@ ipcMain.handle('undo-import-files', (event, { items }) => {
       restored++;
     }
     return { ok: true, restored, failed };
+  } catch (err) {
+    return { ok: false, error: String(err && err.message || err) };
+  }
+});
+
+// 确保某个分组的文件夹存在（新建/重命名分组时调用，不打开资源管理器）
+ipcMain.handle('ensure-group-folder', (event, payload) => {
+  try {
+    const dir = groupDir(payload && payload.group, true);
+    return { ok: true, path: dir };
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) };
   }
