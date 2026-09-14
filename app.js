@@ -1590,13 +1590,16 @@ async function removeCurrentItem() {
 // ===== 右键菜单 =====
 
 let contextMenuTargetIds = [];
-let contextMenuContext = null; // { type: 'items', ids } | { type: 'group', id }
+let contextMenuContext = null; // { type: 'items', ids } | { type: 'group', id } | { type: 'app' }
+let contextMenuAnchor = { x: 0, y: 0 };   // 菜单锚点（二级菜单沿用同一个位置）
+let contextMenuStack = [];                 // 二级菜单的返回栈
 
 function closeContextMenu() {
   const menu = $('#contextMenu');
   menu.hidden = true;
   contextMenuTargetIds = [];
   contextMenuContext = null;
+  contextMenuStack = [];
 }
 
 async function handleContextAction(action) {
@@ -1661,22 +1664,13 @@ async function handleContextAction(action) {
   }
 }
 
-// 统一渲染菜单：定位到鼠标处，并聚焦第一个可用项（支持键盘操作）
-function renderContextMenu(e, rows, context) {
+// 把菜单放到锚点处（防止溢出屏幕），并聚焦第一个可用项
+function placeContextMenu() {
   const menu = $('#contextMenu');
-  contextMenuContext = context;
-
-  menu.innerHTML = rows.map((row) => {
-    if (row.separator) return '<div class="context-menu__separator"></div>';
-    const tip = row.tip ? ` title="${escapeHtml(row.tip)}"` : '';
-    const cls = row.danger ? ' class="danger"' : '';
-    return `<button type="button" data-action="${row.action}"${row.disabled ? ' disabled' : ''}${cls}${tip}>${row.label}</button>`;
-  }).join('');
-
   menu.hidden = false;
   const rect = menu.getBoundingClientRect();
-  const x = Math.min(e.clientX, window.innerWidth - rect.width - 8);
-  const y = Math.min(e.clientY, window.innerHeight - rect.height - 8);
+  const x = Math.min(contextMenuAnchor.x, window.innerWidth - rect.width - 8);
+  const y = Math.min(contextMenuAnchor.y, window.innerHeight - rect.height - 8);
   menu.style.left = `${Math.max(4, x)}px`;
   menu.style.top = `${Math.max(4, y)}px`;
 
@@ -1684,10 +1678,56 @@ function renderContextMenu(e, rows, context) {
   if (first) first.focus();
 }
 
-// 菜单键盘导航：↑↓ 移动、Home/End 首尾、Esc 关闭
+function contextMenuRowsToHtml(rows) {
+  return rows.map((row) => {
+    if (row.separator) return '<div class="context-menu__separator"></div>';
+    const tip = row.tip ? ` title="${escapeHtml(row.tip)}"` : '';
+    const cls = row.danger ? ' class="danger"' : '';
+    return `<button type="button" data-action="${row.action}"${row.disabled ? ' disabled' : ''}${cls}${tip}>${row.label}</button>`;
+  }).join('');
+}
+
+// 统一渲染菜单：定位到鼠标处，并聚焦第一个可用项（支持键盘操作）
+function renderContextMenu(e, rows, context) {
+  contextMenuContext = context;
+  contextMenuAnchor = { x: e.clientX, y: e.clientY };
+  contextMenuStack = [];
+
+  $('#contextMenu').innerHTML = contextMenuRowsToHtml(rows);
+  placeContextMenu();
+}
+
+// 进入二级菜单：把当前菜单压栈，换成新的（新菜单请自带「‹ 返回」）
+function pushContextMenu(rows) {
+  const menu = $('#contextMenu');
+  contextMenuStack.push(menu.innerHTML);
+  menu.innerHTML = contextMenuRowsToHtml(rows);
+  placeContextMenu();
+}
+
+// 返回上一级菜单
+function popContextMenu() {
+  if (!contextMenuStack.length) return;
+  const menu = $('#contextMenu');
+  menu.innerHTML = contextMenuStack.pop();
+  placeContextMenu();
+}
+
+// 菜单键盘导航：↑↓ 移动、Home/End 首尾、← 返回上级、Esc 关闭
 function onContextMenuKeydown(e) {
   const menu = $('#contextMenu');
   if (menu.hidden) return;
+
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeContextMenu();
+    return;
+  }
+  if ((e.key === 'ArrowLeft' || e.key === 'Backspace') && contextMenuStack.length) {
+    e.preventDefault();
+    popContextMenu();
+    return;
+  }
 
   const btns = [...menu.querySelectorAll('button:not([disabled])')];
   if (!btns.length) return;
@@ -1705,9 +1745,6 @@ function onContextMenuKeydown(e) {
   } else if (e.key === 'End') {
     e.preventDefault();
     btns[btns.length - 1].focus();
-  } else if (e.key === 'Escape') {
-    e.preventDefault();
-    closeContextMenu();
   }
 }
 
@@ -1747,9 +1784,108 @@ function openGroupContextMenu(e, groupId) {
   renderContextMenu(e, rows, { type: 'group', id: groupId });
 }
 
-// ===== 工具栏「⋯」菜单：导入方式等设置 =====
+// ===== 「批量操作」二级菜单：点了之后让用户自己挑要做什么 =====
+function batchLinkedCount() {
+  return state.items.filter((i) => state.selection.has(i.id) && isItemLinked(i)).length;
+}
+
+function openBatchContextMenu() {
+  const list = currentListItems();
+  const count = state.selection.size;
+  const linked = batchLinkedCount();
+
+  pushContextMenu([
+    {
+      label: `全选当前列表（${list.length} 项）`,
+      action: 'batchSelectAll',
+      disabled: !list.length,
+      tip: list.length ? '' : '当前列表没有项目'
+    },
+    {
+      label: count ? `取消选择（${count} 项）` : '取消选择',
+      action: 'batchClear',
+      disabled: !count
+    },
+    { separator: true },
+    {
+      label: '移到分组…',
+      action: 'batchMove',
+      disabled: !count,
+      tip: count ? '' : '先勾选要移动的项目'
+    },
+    {
+      label: linked ? `导入到库（${linked} 项）` : '导入到库',
+      action: 'batchImport',
+      disabled: !linked,
+      tip: linked ? '' : '所选项目都已在库内'
+    },
+    { separator: true },
+    {
+      label: count ? `删除选中的 ${count} 项` : '删除选中项',
+      action: 'batchDelete',
+      danger: true,
+      disabled: !count,
+      tip: count ? '' : '先勾选要删除的项目'
+    },
+    { separator: true },
+    { label: '‹ 返回', action: '__back' }
+  ]);
+}
+
+function openBatchMoveMenu() {
+  const rows = [{ label: getUngroupedName(), action: 'batchMoveTo:ungrouped' }];
+  for (const group of state.groups) {
+    rows.push({ label: group.name, action: 'batchMoveTo:' + group.id });
+  }
+  rows.push({ separator: true });
+  rows.push({ label: '‹ 返回', action: '__back' });
+  pushContextMenu(rows);
+}
+
+// ===== 工具栏「⋯」菜单：批量操作入口 + 导入方式等设置 =====
 async function handleAppContextAction(action) {
+  // 返回上一级（不能先关菜单）
+  if (action === '__back') {
+    popContextMenu();
+    return;
+  }
+  // 二级菜单里的动作也不需要关闭菜单（pushContextMenu 自己会换）
+  if (action === 'batch') {
+    openBatchContextMenu();
+    return;
+  }
+  if (action === 'batchMove') {
+    openBatchMoveMenu();
+    return;
+  }
+  if (action.startsWith('batchMoveTo:')) {
+    const gid = action.slice('batchMoveTo:'.length);
+    const ids = [...state.selection];
+    closeContextMenu();
+    if (ids.length) await moveItemsToGroup(ids, gid);
+    return;
+  }
+
+  const ids = [...state.selection];
   closeContextMenu();
+
+  if (action === 'batchSelectAll') {
+    selectAllInList();
+    return;
+  }
+  if (action === 'batchClear') {
+    clearSelection();
+    return;
+  }
+  if (action === 'batchImport') {
+    await importSelected();
+    return;
+  }
+  if (action === 'batchDelete') {
+    if (ids.length) await confirmDeleteFlow(ids);
+    else showToast('请先勾选要删除的项目');
+    return;
+  }
 
   if (action === 'importMove') {
     setImportMode('move');
@@ -1767,24 +1903,21 @@ async function handleAppContextAction(action) {
   }
   if (action === 'organize') {
     await organizeLibrary();
-    return;
-  }
-  if (action === 'selectAll') {
-    selectAllInList();
   }
 }
 
 function openAppContextMenu(e) {
   const mode = getImportMode();
   const listCount = currentListItems().length;
+  const count = state.selection.size;
 
   contextMenuTargetIds = [];
   renderContextMenu(e, [
     {
-      label: `全选当前列表（${listCount} 项）`,
-      action: 'selectAll',
-      disabled: listCount === 0,
-      tip: listCount === 0 ? '当前列表没有项目' : ''
+      label: count ? `批量操作（已选 ${count} 项）` : '批量操作',
+      action: 'batch',
+      disabled: listCount === 0 && !count,
+      tip: (listCount === 0 && !count) ? '当前列表没有项目' : '全选 / 移到分组 / 导入到库 / 删除'
     },
     { separator: true },
     { label: (mode === 'move' ? '✓ ' : '') + '导入时移动原文件到资源文件夹', action: 'importMove' },
@@ -2672,6 +2805,10 @@ function initEvents() {
 
   // 右键菜单：按钮分发 + 点击别处/Esc 关闭
   $('#contextMenu').addEventListener('click', (e) => {
+    // 菜单内部的点击一律不冒泡到 document：
+    // 否则二级菜单会在自己重绘后，被"点击外部关闭"的逻辑误判关掉
+    e.stopPropagation();
+
     const btn = e.target.closest('button[data-action]');
     if (!btn || btn.disabled) return;
     const action = btn.dataset.action;
