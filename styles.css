@@ -2146,8 +2146,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* ===== 音乐视图（分组名含「音乐」时替换缩略图网格） ===== */
-.panel--left.is-music .filter-bar,
-.panel--left.is-music .batch-bar {
+.panel--left.is-music .filter-bar {
   display: none;
 }
 
@@ -2196,6 +2195,15 @@ h1, h2, h3, h4, h5, h6 {
 
 .music-row.is-playing {
   background: var(--accent-soft);
+}
+
+.music-row.is-selected {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--primary);
+}
+
+.music-row.is-dragging {
+  opacity: 0.45;
 }
 
 .music-row__index {

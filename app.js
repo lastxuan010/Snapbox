@@ -1255,13 +1255,9 @@ function updateBatchBar() {
   $('#batchSelectAllBtn').textContent = allSelected ? '已全选' : '全选';
 }
 
-// 全选当前列表（受分组 / 搜索 / 筛选影响）
+// 全选当前列表（受分组 / 搜索 / 筛选影响；音乐视图选全部歌曲）
 function selectAllInList() {
-  if (isMusicGroup(state.selectedGroupId)) {
-    showToast('音乐视图里请对单首歌右键操作');
-    return;
-  }
-  const items = getFilteredItems();
+  const items = currentListItems();
   if (!items.length) {
     showToast('当前列表没有可选择的项目');
     return;
@@ -1347,9 +1343,13 @@ async function moveItemsToGroup(ids, gid) {
   // 库内文件跟着分组走
   await relocateItemsFiles(movedItems);
 
+  // 移走之后它们已经不在当前列表里了，清掉选中
+  state.selection.clear();
+
   renderFolders();
   renderGrid();
   renderMetaGroupOptions();
+  updateBatchBar();
   if (state.selectedId && ids.includes(state.selectedId)) {
     $('#metaGroup').value = target || '';
   }
@@ -1776,16 +1776,15 @@ async function handleAppContextAction(action) {
 
 function openAppContextMenu(e) {
   const mode = getImportMode();
-  const musicMode = isMusicGroup(state.selectedGroupId);
-  const listCount = musicMode ? 0 : getFilteredItems().length;
+  const listCount = currentListItems().length;
 
   contextMenuTargetIds = [];
   renderContextMenu(e, [
     {
       label: `全选当前列表（${listCount} 项）`,
       action: 'selectAll',
-      disabled: musicMode || listCount === 0,
-      tip: musicMode ? '音乐视图下请对单首歌右键操作' : (listCount === 0 ? '当前列表没有项目' : '')
+      disabled: listCount === 0,
+      tip: listCount === 0 ? '当前列表没有项目' : ''
     },
     { separator: true },
     { label: (mode === 'move' ? '✓ ' : '') + '导入时移动原文件到资源文件夹', action: 'importMove' },
@@ -2436,6 +2435,12 @@ function renderMusicList() {
   player.queue = items;
   player.index = player.currentId ? items.findIndex((i) => i.id === player.currentId) : -1;
 
+  // 清掉已经不在列表里的选中项（比如刚被移到别的分组）
+  const liveIds = new Set(items.map((i) => i.id));
+  for (const id of [...state.selection]) {
+    if (!liveIds.has(id)) state.selection.delete(id);
+  }
+
   if (!items.length) {
     list.innerHTML = '<li class="music-list__empty">'
       + (state.search
@@ -2447,7 +2452,8 @@ function renderMusicList() {
 
   list.innerHTML = items.map((item, i) => {
     const active = item.id === player.currentId;
-    return `<li class="music-row${active ? ' is-playing' : ''}" data-id="${item.id}" title="${escapeHtml(item.name)}">
+    const selected = state.selection.has(item.id);
+    return `<li class="music-row${active ? ' is-playing' : ''}${selected ? ' is-selected' : ''}" draggable="true" data-id="${item.id}" title="${escapeHtml(item.name)}">
       <span class="music-row__index">${active ? '♪' : i + 1}</span>
       <span class="music-row__cover">♪</span>
       <span class="music-row__main">
@@ -2460,21 +2466,70 @@ function renderMusicList() {
   }).join('');
 
   list.querySelectorAll('.music-row').forEach((row) => {
-    row.addEventListener('click', () => {
-      const item = state.items.find((i) => i.id === row.dataset.id);
+    const rowId = row.dataset.id;
+
+    // 普通点击 = 播放；Ctrl/Cmd 加选；Shift 范围选
+    row.addEventListener('click', (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (state.selection.has(rowId)) state.selection.delete(rowId);
+        else state.selection.add(rowId);
+        state.lastSelectedId = rowId;
+        renderMusicList();
+        updateBatchBar();
+        return;
+      }
+      if (e.shiftKey && state.lastSelectedId) {
+        const ordered = currentListItems();
+        const a = ordered.findIndex((i) => i.id === state.lastSelectedId);
+        const b = ordered.findIndex((i) => i.id === rowId);
+        if (a !== -1 && b !== -1) {
+          const [start, end] = a < b ? [a, b] : [b, a];
+          for (let k = start; k <= end; k++) state.selection.add(ordered[k].id);
+          renderMusicList();
+          updateBatchBar();
+          return;
+        }
+      }
+      if (state.selection.size) {
+        state.selection.clear();
+        renderMusicList();
+        updateBatchBar();
+      }
+      const item = state.items.find((i) => i.id === rowId);
       if (item) playMusicItem(item);
     });
+
+    // 拖到左侧分组 = 批量移动（文件也跟着走）
+    row.addEventListener('dragstart', (e) => {
+      const ids = state.selection.has(rowId) && state.selection.size > 1
+        ? [...state.selection]
+        : [rowId];
+      e.dataTransfer.setData('text/plain', JSON.stringify(ids));
+      e.dataTransfer.effectAllowed = 'move';
+      row.classList.add('is-dragging');
+    });
+    row.addEventListener('dragend', () => {
+      row.classList.remove('is-dragging');
+      $$('.folder-item.is-drop-target').forEach((el) => el.classList.remove('is-drop-target'));
+    });
+
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      openContextMenu(e, [row.dataset.id]);
+      const ids = state.selection.has(rowId) && state.selection.size > 1
+        ? [...state.selection]
+        : [rowId];
+      openContextMenu(e, ids);
     });
 
     const moreBtn = row.querySelector('.music-row__more');
     if (moreBtn) {
       moreBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        openContextMenu(e, [row.dataset.id]);
+        const ids = state.selection.has(rowId) && state.selection.size > 1
+          ? [...state.selection]
+          : [rowId];
+        openContextMenu(e, ids);
       });
     }
   });
