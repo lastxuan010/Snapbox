@@ -1230,17 +1230,56 @@ async function importCurrentItem() {
   showToast('已导入到库');
 }
 
-// ===== 批量多选与批量导入 =====
+// ===== 批量多选 / 批量导入 / 批量删除 =====
+
+// 当前列表里可见的条目（音乐视图走播放列表）
+function currentListItems() {
+  return isMusicGroup(state.selectedGroupId) ? getMusicItems() : getFilteredItems();
+}
 
 function updateBatchBar() {
   const bar = $('#batchBar');
   if (!bar) return;
   const count = state.selection.size;
   bar.hidden = count === 0;
+
   const linkedCount = state.items.filter((i) => state.selection.has(i.id) && isItemLinked(i)).length;
   $('#batchCount').textContent = `已选 ${count} 项`;
   $('#batchImportBtn').textContent = linkedCount > 0 ? `导入到库（${linkedCount}）` : '导入到库';
   $('#batchImportBtn').disabled = count === 0 || linkedCount === 0;
+  $('#batchDeleteBtn').textContent = count ? `删除（${count}）` : '删除';
+
+  const total = currentListItems().length;
+  const allSelected = total > 0 && count >= total;
+  $('#batchSelectAllBtn').disabled = allSelected;
+  $('#batchSelectAllBtn').textContent = allSelected ? '已全选' : '全选';
+}
+
+// 全选当前列表（受分组 / 搜索 / 筛选影响）
+function selectAllInList() {
+  if (isMusicGroup(state.selectedGroupId)) {
+    showToast('音乐视图里请对单首歌右键操作');
+    return;
+  }
+  const items = getFilteredItems();
+  if (!items.length) {
+    showToast('当前列表没有可选择的项目');
+    return;
+  }
+  for (const item of items) state.selection.add(item.id);
+  state.lastSelectedId = items[items.length - 1].id;
+  renderGrid();
+  updateBatchBar();
+}
+
+// 批量删除选中项（走统一的删除确认：可选"仅移除"或"连文件一起删"）
+function deleteSelection() {
+  const ids = [...state.selection];
+  if (!ids.length) {
+    showToast('请先选择要删除的项目');
+    return null;
+  }
+  return confirmDeleteFlow(ids);
 }
 
 function clearSelection() {
@@ -1471,7 +1510,7 @@ async function confirmDeleteFlow(ids) {
   if (!targets.length) return;
 
   const withFile = targets.filter((t) => itemDiskPath(t));
-  const names = targets.length === 1 ? `「${targets[0].name}」` : `${targets.length} 个项目`;
+  const names = targets.length === 1 ? `「${targets[0].name}」` : `选中的 ${targets.length} 个项目`;
   const where = withFile.length
     ? `\n\n文件位置：${itemDiskPath(withFile[0])}${withFile.length > 1 ? ` 等 ${withFile.length} 个` : ''}`
     : '';
@@ -1728,13 +1767,27 @@ async function handleAppContextAction(action) {
   }
   if (action === 'organize') {
     await organizeLibrary();
+    return;
+  }
+  if (action === 'selectAll') {
+    selectAllInList();
   }
 }
 
 function openAppContextMenu(e) {
   const mode = getImportMode();
+  const musicMode = isMusicGroup(state.selectedGroupId);
+  const listCount = musicMode ? 0 : getFilteredItems().length;
+
   contextMenuTargetIds = [];
   renderContextMenu(e, [
+    {
+      label: `全选当前列表（${listCount} 项）`,
+      action: 'selectAll',
+      disabled: musicMode || listCount === 0,
+      tip: musicMode ? '音乐视图下请对单首歌右键操作' : (listCount === 0 ? '当前列表没有项目' : '')
+    },
+    { separator: true },
     { label: (mode === 'move' ? '✓ ' : '') + '导入时移动原文件到资源文件夹', action: 'importMove' },
     { label: (mode === 'copy' ? '✓ ' : '') + '导入时复制，原文件保留在原处', action: 'importCopy' },
     { separator: true },
@@ -2559,6 +2612,8 @@ function initEvents() {
   $('#importBtn').addEventListener('click', importCurrentItem);
   $('#batchImportBtn').addEventListener('click', importSelected);
   $('#batchCancelBtn').addEventListener('click', clearSelection);
+  $('#batchSelectAllBtn').addEventListener('click', selectAllInList);
+  $('#batchDeleteBtn').addEventListener('click', deleteSelection);
 
   // 右键菜单：按钮分发 + 点击别处/Esc 关闭
   $('#contextMenu').addEventListener('click', (e) => {
@@ -2598,6 +2653,24 @@ function initEvents() {
     }
   });
   // 返回：自动保存后退出编辑器
+  // 批量选择的快捷键：Ctrl/Cmd+A 全选当前列表，Delete 删除选中项
+  document.addEventListener('keydown', (e) => {
+    const t = e.target;
+    const tag = t && t.tagName ? t.tagName.toLowerCase() : '';
+    if (tag === 'input' || tag === 'textarea' || (t && t.isContentEditable)) return; // 输入框里保留原生行为
+    if ($('#noteEditorOverlay').classList.contains('is-visible')) return;             // 笔记编辑器里用原生全选
+
+    if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'a') {
+      e.preventDefault();
+      selectAllInList();
+      return;
+    }
+    if (e.key === 'Delete' && state.selection.size) {
+      e.preventDefault();
+      deleteSelection();
+    }
+  });
+
   $('#closeNoteEditorBtn').addEventListener('click', saveNoteEditor);
   // 右上角窗口控制
   $('#noteMinBtn').addEventListener('click', () => window.electronAPI?.minimize?.());

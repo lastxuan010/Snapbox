@@ -645,10 +645,10 @@ body {
 /* 批量操作条 */
 .batch-bar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 9px 12px;
   background: var(--accent-soft);
   border: 1px solid var(--ring);
   border-radius: var(--radius-sm);
@@ -662,7 +662,19 @@ body {
 
 .batch-bar__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+}
+
+.batch-bar__actions .btn {
+  flex: 1 1 auto;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.batch-bar__actions .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .thumb-card__media {
