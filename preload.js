@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveTextFile: (payload) => ipcRenderer.invoke('save-text-file', payload),
   // 复制富文本（HTML + 纯文本）到剪贴板
   copyRichText: (html, text) => ipcRenderer.invoke('copy-rich-text', { html, text }),
+  // 连按两下 J：收起窗口（恢复由主进程的全局快捷键接管）
+  hideWindowWithHotkey: () => ipcRenderer.send('window-hide-hotkey'),
   // 把一批条目打包成 zip（存到 library/zip/），返回压缩包路径
   archiveItems: (payload) => ipcRenderer.invoke('archive-items', payload),
   // 打开压缩包文件夹（library/zip）

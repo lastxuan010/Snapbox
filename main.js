@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, clipboard, shell, nativeImage, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, shell, nativeImage, dialog, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -60,6 +60,11 @@ function createWindow() {
     mainWindow.show();
   });
 
+  // 用任务栏 / Alt+Tab 等方式把窗口拉回来时，立刻释放全局 J，别影响别处打字
+  mainWindow.on('restore', () => disarmRestoreHotkey());
+  mainWindow.on('show', () => disarmRestoreHotkey());
+  mainWindow.on('focus', () => disarmRestoreHotkey());
+
 }
 
 app.whenReady().then(() => {
@@ -86,6 +91,64 @@ ipcMain.on('window-maximize', (event) => {
 ipcMain.on('window-close', (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) win.close();
+});
+
+// ---------- 连按两下 J：收起窗口 / 再连按两下恢复 ----------
+// 窗口收起后渲染进程收不到键盘事件，所以"再按两下恢复"只能由全局快捷键接管；
+// 且只在窗口被这样收起期间注册，一恢复就注销，避免长期占用 J 键。
+const J_PRESS_MS = 500;
+let restoreHotkeyArmed = false;
+let lastGlobalJAt = 0;
+
+function disarmRestoreHotkey() {
+  if (!restoreHotkeyArmed) return;
+  restoreHotkeyArmed = false;
+  lastGlobalJAt = 0;
+  try {
+    globalShortcut.unregister('J');
+  } catch (_) { /* ignore */ }
+}
+
+function restoreFromHotkey(win) {
+  disarmRestoreHotkey();
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function armRestoreHotkey(win) {
+  if (restoreHotkeyArmed) return;
+  restoreHotkeyArmed = true;
+  lastGlobalJAt = 0;
+
+  const ok = globalShortcut.register('J', () => {
+    const now = Date.now();
+    if (now - lastGlobalJAt <= J_PRESS_MS) {
+      restoreFromHotkey(win);
+      return;
+    }
+    lastGlobalJAt = now;
+  });
+
+  if (!ok) {
+    // 注册不上也不影响：还能用任务栏把窗口点回来
+    restoreHotkeyArmed = false;
+    console.warn('[hotkey] 全局 J 注册失败，请用任务栏恢复窗口');
+  }
+}
+
+ipcMain.on('window-hide-hotkey', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return;
+  win.minimize();
+  armRestoreHotkey(win);
+});
+
+app.on('will-quit', () => {
+  try {
+    globalShortcut.unregisterAll();
+  } catch (_) { /* ignore */ }
 });
 
 // 读取任意本地路径文件，返回 data URL（供"路径引用"模式按需加载预览）
