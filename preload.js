@@ -38,5 +38,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 弹出系统保存对话框写文本文件（导出 HTML 等）
   saveTextFile: (payload) => ipcRenderer.invoke('save-text-file', payload),
   // 复制富文本（HTML + 纯文本）到剪贴板
-  copyRichText: (html, text) => ipcRenderer.invoke('copy-rich-text', { html, text })
+  copyRichText: (html, text) => ipcRenderer.invoke('copy-rich-text', { html, text }),
+  // 把一批条目打包成 zip（存到 library/zip/），返回压缩包路径
+  archiveItems: (payload) => ipcRenderer.invoke('archive-items', payload),
+  // 打开压缩包文件夹（library/zip）
+  openZipFolder: () => ipcRenderer.invoke('open-zip-folder'),
+  // 打包进度回调（覆盖式注册，始终只保留最后一个）
+  onArchiveProgress: (cb) => {
+    ipcRenderer.removeAllListeners('archive-progress');
+    ipcRenderer.on('archive-progress', (event, payload) => cb(payload));
+  }
 });

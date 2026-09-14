@@ -28,6 +28,7 @@
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language-data": "^6.5.2",
+    "archiver": "^6.0.2",
     "codemirror": "^6.0.2"
   }
 }

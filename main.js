@@ -2,6 +2,13 @@ const { app, BrowserWindow, ipcMain, clipboard, shell, nativeImage, dialog } = r
 const path = require('path');
 const fs = require('fs');
 
+// 打包库按需加载：万一它加载不了，也只影响"压缩备份"这一个功能，不会拖垮整个应用启动
+let archiverLib = null;
+function getArchiver() {
+  if (!archiverLib) archiverLib = require('archiver');
+  return archiverLib;
+}
+
 const MIME_MAP = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -320,6 +327,178 @@ ipcMain.handle('copy-rich-text', (event, { html, text }) => {
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) };
+  }
+});
+
+// ---------- 压缩备份：library/zip/<分组名>.zip ----------
+
+function zipDir(create = false) {
+  const dir = path.join(libraryRoot(), 'zip');
+  if (create) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+// 库内文件索引：<id>.<ext> 的 id → 绝对路径（扫描 library 根目录与各分组文件夹，跳过 zip 自身）
+function buildLibraryIndex() {
+  const index = new Map();
+  const scan = (dir) => {
+    let files = [];
+    try {
+      files = fs.readdirSync(dir);
+    } catch (_) {
+      return;
+    }
+    for (const file of files) {
+      const dot = file.indexOf('.');
+      if (dot <= 0) continue;
+      const key = file.slice(0, dot);
+      if (!index.has(key)) index.set(key, path.join(dir, file));
+    }
+  };
+
+  scan(libraryRoot());
+  try {
+    for (const entry of fs.readdirSync(libraryRoot(), { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name !== 'zip') scan(path.join(libraryRoot(), entry.name));
+    }
+  } catch (_) { /* library 还没建 */ }
+  return index;
+}
+
+// 压缩包内的文件名：去非法字符 + 重名自动加序号
+function uniqueEntryName(name, used) {
+  let base = String(name || 'file')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/[\u0000-\u001f]/g, '')
+    .replace(/^[.\s]+/, '')
+    .trim();
+  if (!base) base = 'file';
+
+  const dot = base.lastIndexOf('.');
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const ext = dot > 0 ? base.slice(dot) : '';
+
+  let candidate = base;
+  let n = 2;
+  while (used.has(candidate.toLowerCase())) {
+    candidate = `${stem} (${n})${ext}`;
+    n++;
+  }
+  used.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function timeStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+// 把一批条目打包成 library/zip/<label>.zip
+// items: [{ kind: 'file', id, name, path } | { kind: 'note', title, html }]
+ipcMain.handle('archive-items', async (event, payload) => {
+  const items = (payload && payload.items) || [];
+  const label = sanitizeFolderName(payload && payload.label) || '备份';
+  let target = '';
+
+  try {
+    if (!items.length) return { ok: false, error: '没有可打包的内容' };
+
+    const dir = zipDir(true);
+    target = path.join(dir, `${label}.zip`);
+    // 同名压缩包已存在时保留旧的那份，本次加时间戳，避免备份互相覆盖
+    if (fs.existsSync(target)) target = path.join(dir, `${label}_${timeStamp()}.zip`);
+
+    const index = buildLibraryIndex();
+    const used = new Set();
+    const entries = [];
+    const missing = [];
+
+    for (const it of items) {
+      if (it.kind === 'note') {
+        entries.push({
+          entryName: uniqueEntryName((it.title || '未命名笔记') + '.html', used),
+          html: it.html || ''
+        });
+        continue;
+      }
+      const file = [it.path, index.get(it.id)]
+        .filter(Boolean)
+        .find((p) => {
+          try {
+            return fs.statSync(p).isFile();
+          } catch (_) {
+            return false;
+          }
+        });
+      if (!file) {
+        missing.push(it.name || it.id);
+        continue;
+      }
+      entries.push({ entryName: uniqueEntryName(it.name || path.basename(file), used), file });
+    }
+
+    if (!entries.length) {
+      return { ok: false, error: '所选内容的文件都不在磁盘上了', missing };
+    }
+
+    const archiver = getArchiver();
+    const output = fs.createWriteStream(target);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    const finished = new Promise((resolve, reject) => {
+      output.on('close', resolve);
+      output.on('error', reject);
+      archive.on('error', reject);
+      archive.on('warning', (err) => {
+        if (err && err.code !== 'ENOENT') reject(err);
+      });
+    });
+
+    // 进度回传（按"已完成条目数"去重，避免刷屏）
+    let lastSent = -1;
+    archive.on('progress', (data) => {
+      const processed = data && data.entries ? data.entries.processed : 0;
+      if (processed === lastSent) return;
+      lastSent = processed;
+      try {
+        event.sender.send('archive-progress', { entries: processed, total: entries.length });
+      } catch (_) { /* 窗口可能已关闭 */ }
+    });
+
+    archive.pipe(output);
+    for (const e of entries) {
+      if (e.html !== undefined) archive.append(e.html, { name: e.entryName });
+      else archive.file(e.file, { name: e.entryName });
+    }
+
+    await archive.finalize();
+    await finished;
+
+    return {
+      ok: true,
+      path: target,
+      dir,
+      added: entries.length,
+      missing,
+      size: fs.statSync(target).size
+    };
+  } catch (err) {
+    // 失败时不留半个压缩包
+    try {
+      if (target && fs.existsSync(target)) fs.unlinkSync(target);
+    } catch (_) { /* ignore */ }
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
+// 打开压缩包文件夹（library/zip）
+ipcMain.handle('open-zip-folder', () => {
+  try {
+    const dir = zipDir(true);
+    shell.openPath(dir);
+    return { ok: true, path: dir };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
   }
 });
 

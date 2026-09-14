@@ -1609,6 +1609,90 @@ async function removeCurrentItem() {
   await confirmDeleteFlow([state.selectedId]);
 }
 
+// ===== 压缩备份：把一个分组打包成 library/zip/<分组名>.zip =====
+
+// 笔记本身不是磁盘文件，导出成可独立打开的 HTML 写进压缩包
+function noteToExportHtml(item) {
+  const title = item.name || '未命名笔记';
+  return [
+    '<!doctype html>',
+    '<html lang="zh-CN">',
+    '<head>',
+    '<meta charset="utf-8">',
+    `<title>${escapeHtml(title)}</title>`,
+    '<style>',
+    'body{margin:0 auto;padding:32px;max-width:820px;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;line-height:1.75;color:#1d1d1f;background:#fff;}',
+    'h1{font-size:24px;}h2{font-size:19px;}img{max-width:100%;height:auto;border-radius:8px;}',
+    'blockquote{margin:12px 0;padding:6px 14px;border-left:3px solid #d2d2d7;color:#6e6e73;}',
+    'pre,code{background:#f5f5f7;border-radius:6px;padding:2px 6px;font-family:ui-monospace,Consolas,monospace;}',
+    '</style>',
+    '</head>',
+    '<body>',
+    noteToHtml(item.description || ''),
+    '</body>',
+    '</html>'
+  ].join('\n');
+}
+
+// 打包一批条目（分组 / 全部 / 选中项都能用）
+async function archiveItemsToZip(label, items) {
+  if (!window.electronAPI?.archiveItems) {
+    showToast('当前环境不支持打包');
+    return null;
+  }
+  if (!items.length) {
+    showToast(`「${label}」还没有可打包的内容`);
+    return null;
+  }
+
+  const payloadItems = items.map((item) => (item.type === 'note'
+    ? { kind: 'note', id: item.id, title: item.name || '未命名笔记', html: noteToExportHtml(item) }
+    : { kind: 'file', id: item.id, name: item.name, path: itemDiskPath(item) }));
+
+  // 大文件打包耗时较久，先给"进行中"提示，并订阅进度
+  const noteCount = items.filter((i) => i.type === 'note').length;
+  const noteHint = noteCount ? `，含 ${noteCount} 篇笔记` : '';
+  showToast(`正在打包「${label}」…共 ${items.length} 项${noteHint}`, { duration: 120000 });
+  window.electronAPI?.onArchiveProgress?.((p) => {
+    if (p && p.total) showToast(`正在打包「${label}」… ${p.entries}/${p.total}`, { duration: 120000 });
+  });
+
+  const res = await window.electronAPI.archiveItems({ label, items: payloadItems });
+  window.electronAPI?.onArchiveProgress?.(() => {});
+
+  if (!res || !res.ok) {
+    showToast('打包失败：' + ((res && res.error) || '未知错误'));
+    return null;
+  }
+
+  const parts = [`已备份「${label}」：${res.added} 个文件（${formatFileSize(res.size)}）`];
+  if (res.missing && res.missing.length) parts.push(`${res.missing.length} 个文件在磁盘上找不到，已跳过`);
+  showToast(parts.join('，'), {
+    duration: 8000,
+    action: { label: '查看压缩包', onAction: () => window.electronAPI?.showInExplorer?.(res.path) }
+  });
+  return res;
+}
+
+// 取某个分组的全部条目
+function itemsInGroup(groupId) {
+  if (groupId === 'all') return state.items.slice();
+  if (groupId === 'ungrouped') return state.items.filter((i) => !i.groupId);
+  return state.items.filter((i) => i.groupId === groupId);
+}
+
+async function archiveGroup(groupId) {
+  const group = state.groups.find((g) => g.id === groupId);
+  const label = groupId === 'all' ? '全部' : (groupId === 'ungrouped' ? getUngroupedName() : (group ? group.name : '分组'));
+  await archiveItemsToZip(label, itemsInGroup(groupId));
+}
+
+// 打包当前勾选的条目
+async function archiveSelection() {
+  const items = state.items.filter((i) => state.selection.has(i.id));
+  await archiveItemsToZip('选中项', items);
+}
+
 // ===== 右键菜单 =====
 
 let contextMenuTargetIds = [];
@@ -1788,11 +1872,29 @@ async function handleGroupContextAction(action) {
   }
   if (action === 'deleteGroup') {
     await removeGroup(groupId);
+    return;
+  }
+  if (action === 'archiveGroup') {
+    await archiveGroup(groupId);
+    return;
+  }
+  if (action === 'openZipFolder') {
+    window.electronAPI?.openZipFolder?.();
   }
 }
 
 function openGroupContextMenu(e, groupId) {
-  const rows = [{ label: '在资源管理器中打开', action: 'openInExplorer' }];
+  const count = itemsInGroup(groupId).length;
+  const rows = [
+    {
+      label: count ? `压缩备份该分组（${count} 项）` : '压缩备份该分组',
+      action: 'archiveGroup',
+      disabled: count === 0,
+      tip: count ? '打包成一个 zip，存到 library/zip/' : '该分组还没有内容'
+    },
+    { separator: true },
+    { label: '在资源管理器中打开', action: 'openInExplorer' }
+  ];
 
   if (groupId !== 'all') {
     rows.push({ separator: true });
@@ -1801,6 +1903,8 @@ function openGroupContextMenu(e, groupId) {
   if (groupId !== 'all' && groupId !== 'ungrouped') {
     rows.push({ label: '删除分组', action: 'deleteGroup', danger: true });
   }
+  rows.push({ separator: true });
+  rows.push({ label: '打开压缩包文件夹', action: 'openZipFolder' });
 
   contextMenuTargetIds = [];
   renderContextMenu(e, rows, { type: 'group', id: groupId });
@@ -1840,6 +1944,12 @@ function openBatchContextMenu() {
       action: 'batchImport',
       disabled: !linked,
       tip: linked ? '' : '所选项目都已在库内'
+    },
+    {
+      label: count ? `压缩备份选中项（${count} 项）` : '压缩备份选中项',
+      action: 'batchArchive',
+      disabled: !count,
+      tip: count ? '打包成一个 zip，存到 library/zip/' : '先勾选要备份的项目'
     },
     { separator: true },
     {
@@ -1903,6 +2013,10 @@ async function handleAppContextAction(action) {
     await importSelected();
     return;
   }
+  if (action === 'batchArchive') {
+    await archiveSelection();
+    return;
+  }
   if (action === 'batchDelete') {
     if (ids.length) await confirmDeleteFlow(ids);
     else showToast('请先勾选要删除的项目');
@@ -1921,6 +2035,10 @@ async function handleAppContextAction(action) {
   }
   if (action === 'openLibraryRoot') {
     window.electronAPI?.openLibraryFolder?.('');
+    return;
+  }
+  if (action === 'openZipFolder') {
+    window.electronAPI?.openZipFolder?.();
     return;
   }
   if (action === 'organize') {
@@ -1946,7 +2064,8 @@ function openAppContextMenu(e) {
     { label: (mode === 'copy' ? '✓ ' : '') + '导入时复制，原文件保留在原处', action: 'importCopy' },
     { separator: true },
     { label: '整理资源到分组文件夹', action: 'organize' },
-    { label: '打开软件资源文件夹', action: 'openLibraryRoot' }
+    { label: '打开软件资源文件夹', action: 'openLibraryRoot' },
+    { label: '打开压缩包文件夹', action: 'openZipFolder' }
   ], { type: 'app' });
 }
 
