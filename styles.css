@@ -2251,6 +2251,47 @@ h1, h2, h3, h4, h5, h6 {
   opacity: 0.45;
 }
 
+/* 每行左侧勾选框：hover / 键盘聚焦 / 已勾选 / 批量模式下出现，点一下即选或取消 */
+.music-row__check {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 50%;
+  background: transparent;
+  color: transparent;
+  font-family: inherit;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.12s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.music-row:hover .music-row__check,
+.music-row:focus-within .music-row__check,
+.music-row.is-selected .music-row__check,
+#musicList.is-batch-mode .music-row__check {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.music-row__check:hover {
+  border-color: var(--primary);
+  transform: scale(1.1);
+}
+
+/* 已勾选：实心蓝底 + 白色对勾 */
+.music-row.is-selected .music-row__check {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
 .music-row__index {
   flex: none;
   width: 20px;

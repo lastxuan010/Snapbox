@@ -2586,6 +2586,9 @@ function renderMusicList() {
   const list = $('#musicList');
   if (!list) return;
 
+  // 有勾选时进入「批量模式」：每一行的左侧勾选框都显示出来
+  list.classList.toggle('is-batch-mode', state.selection.size > 0);
+
   const items = getMusicItems();
   player.queue = items;
   player.index = player.currentId ? items.findIndex((i) => i.id === player.currentId) : -1;
@@ -2609,6 +2612,9 @@ function renderMusicList() {
     const active = item.id === player.currentId;
     const selected = state.selection.has(item.id);
     return `<li class="music-row${active ? ' is-playing' : ''}${selected ? ' is-selected' : ''}" draggable="true" data-id="${item.id}" title="${escapeHtml(item.name)}">
+      <button type="button" class="music-row__check" data-check="${item.id}"
+        title="${selected ? '取消选择' : '选择'}" aria-label="${selected ? '取消选择' : '选择'}"
+        aria-pressed="${selected ? 'true' : 'false'}">✓</button>
       <span class="music-row__index">${active ? '♪' : i + 1}</span>
       <span class="music-row__cover">♪</span>
       <span class="music-row__main">
@@ -2623,14 +2629,20 @@ function renderMusicList() {
   list.querySelectorAll('.music-row').forEach((row) => {
     const rowId = row.dataset.id;
 
+    // 左侧勾选框：点一下即选 / 取消，不触发播放、不影响其他已勾选项
+    const checkBtn = row.querySelector('.music-row__check');
+    if (checkBtn) {
+      checkBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        toggleSelection(rowId);
+      });
+    }
+
     // 普通点击 = 播放；Ctrl/Cmd 加选；Shift 范围选
     row.addEventListener('click', (e) => {
       if (e.ctrlKey || e.metaKey) {
-        if (state.selection.has(rowId)) state.selection.delete(rowId);
-        else state.selection.add(rowId);
-        state.lastSelectedId = rowId;
-        renderMusicList();
-        updateBatchBar();
+        toggleSelection(rowId);
         return;
       }
       if (e.shiftKey && state.lastSelectedId) {
