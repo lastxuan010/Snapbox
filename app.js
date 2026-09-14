@@ -892,6 +892,9 @@ function renderGrid() {
   const grid = $('#thumbGrid');
   const musicMode = isMusicGroup(state.selectedGroupId);
 
+  // 有勾选时进入「批量模式」：所有卡片的左上角勾选框都显示出来，点一下就切换
+  grid.classList.toggle('is-batch-mode', state.selection.size > 0);
+
   $('.panel--left').classList.toggle('is-music', musicMode);
   $('#musicView').hidden = !musicMode;
   grid.hidden = musicMode;
@@ -934,14 +937,18 @@ function renderGrid() {
         : '◈';
       const badgeTip = linked ? ' title="链接（未导入，依赖原文件）"' : '';
       const name = isNote ? getNoteExcerpt(item.description) : item.name;
+      const checked = state.selection.has(item.id);
       const classes = [
         'thumb-card',
         item.id === state.selectedId ? 'is-active' : '',
-        state.selection.has(item.id) ? 'is-selected' : ''
+        checked ? 'is-selected' : ''
       ].filter(Boolean).join(' ');
       return `
         <div class="${classes}" draggable="true" data-id="${item.id}" data-type="${item.type}" title="${escapeHtml(item.name)}">
           ${media}
+          <button type="button" class="thumb-card__check" data-check="${item.id}"
+            title="${checked ? '取消选择' : '选择'}" aria-label="${checked ? '取消选择' : '选择'}"
+            aria-pressed="${checked ? 'true' : 'false'}">✓</button>
           <span class="thumb-card__badge ${linked ? 'is-linked' : ''}"${badgeTip}>${badge}</span>
           <span class="thumb-card__name">${escapeHtml(name)}</span>
           <button type="button" class="thumb-card__more" data-more="${item.id}" title="更多操作" aria-label="更多操作">⋯</button>
@@ -987,16 +994,22 @@ function renderGrid() {
         });
       }
 
+      // 左上角勾选框：点一下就是选 / 取消，不打开详情、不影响其他已勾选项
+      const checkBtn = card.querySelector('.thumb-card__check');
+      if (checkBtn) {
+        checkBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          toggleSelection(cardId);
+        });
+      }
+
       card.addEventListener('click', (e) => {
         const id = card.dataset.id;
 
         // Ctrl/Cmd + 点击：切换多选
         if (e.ctrlKey || e.metaKey) {
-          if (state.selection.has(id)) state.selection.delete(id);
-          else state.selection.add(id);
-          state.lastSelectedId = id;
-          renderGrid();
-          updateBatchBar();
+          toggleSelection(id);
           return;
         }
 
@@ -1281,6 +1294,15 @@ function deleteSelection() {
 function clearSelection() {
   if (!state.selection.size) return;
   state.selection.clear();
+  renderGrid();
+  updateBatchBar();
+}
+
+// 切换单个条目的勾选状态（卡片左上角勾选框、Ctrl/Cmd+点击共用）
+function toggleSelection(id) {
+  if (state.selection.has(id)) state.selection.delete(id);
+  else state.selection.add(id);
+  state.lastSelectedId = id;
   renderGrid();
   updateBatchBar();
 }
