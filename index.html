@@ -193,6 +193,17 @@
     <audio id="musicAudio" preload="metadata"></audio>
   </div>
 
+  <div class="theater-overlay" id="theaterOverlay" hidden>
+    <div class="theater-page" role="dialog" aria-modal="true" aria-label="视频播放器">
+      <header class="theater-page__header">
+        <span class="theater-page__title" id="theaterTitle"></span>
+        <button type="button" class="theater-page__btn" id="theaterCloseBtn" title="关闭（Esc）" aria-label="关闭">×</button>
+      </header>
+      <div class="theater-page__stage" id="theaterStage"></div>
+      <p class="theater-page__hint">在这个播放器里点右下角的全屏按钮，就会真正全屏展开</p>
+    </div>
+  </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <div class="context-menu" id="contextMenu" hidden></div>

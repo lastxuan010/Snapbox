@@ -1140,6 +1140,9 @@ async function selectItem(id) {
       video.autoplay = false;
       video.muted = true;
       video.playsInline = true;
+      // 预览里的"全屏"不直接进系统全屏，而是先打开大播放器（见 openTheater）
+      video.dataset.videoFor = item.id;
+      video.__theater = () => openTheater(item, video);
       stage.appendChild(video);
     } else {
       const img = document.createElement('img');
@@ -1607,6 +1610,105 @@ async function removeSourceKeepBackup(ids) {
 async function removeCurrentItem() {
   if (!state.selectedId) return;
   await confirmDeleteFlow([state.selectedId]);
+}
+
+// ===== 视频大播放器：预览里的全屏先把画面放大到接近窗口尺寸，再由它去真全屏 =====
+let theater = null;
+
+// 拦截 <video> 的全屏请求：预览里的视频改为打开大播放器；
+// 大播放器里的视频没有 __theater，照常走原生逻辑（真正全屏）
+function installVideoFullscreenIntercept() {
+  const proto = window.HTMLVideoElement && HTMLVideoElement.prototype;
+  if (!proto || proto.__memorieFsPatched) return;
+  proto.__memorieFsPatched = true;
+
+  for (const name of ['webkitEnterFullscreen', 'requestFullscreen', 'webkitRequestFullscreen']) {
+    const original = proto[name];
+    proto[name] = function (...args) {
+      if (typeof this.__theater === 'function') {
+        this.__theater();
+        return Promise.resolve();
+      }
+      return typeof original === 'function' ? original.apply(this, args) : Promise.resolve();
+    };
+  }
+
+  // 兜底：万一原生控件绕过了上面两个 API 直接进了全屏，立刻退出并改为打开大播放器
+  document.addEventListener('fullscreenchange', () => {
+    const el = document.fullscreenElement || document.webkitFullscreenElement;
+    if (!el || el.tagName !== 'VIDEO' || el.classList.contains('theater-video')) return;
+    if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+    const item = state.items.find((i) => i.id === (el.dataset ? el.dataset.videoFor : ''));
+    if (item) openTheater(item, el);
+  });
+}
+
+async function openTheater(item, fromVideo) {
+  const overlay = $('#theaterOverlay');
+  if (!overlay || !item) return;
+  if (theater) closeTheater();
+
+  const preview = await resolvePreviewUrl(item);
+  if (!preview.ok) {
+    showToast('打不开：文件不存在或无法读取');
+    return;
+  }
+
+  const time = fromVideo && Number.isFinite(fromVideo.currentTime) ? fromVideo.currentTime : 0;
+  const wasPlaying = fromVideo ? !fromVideo.paused : false;
+  if (fromVideo) fromVideo.pause();
+
+  $('#theaterTitle').textContent = item.name || '视频';
+  const stage = $('#theaterStage');
+  stage.innerHTML = '';
+
+  const video = document.createElement('video');
+  video.className = 'theater-video';
+  video.src = preview.url;
+  video.controls = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  // 音量/静音沿用预览里的状态，避免突然出声
+  if (fromVideo) {
+    video.muted = fromVideo.muted;
+    video.volume = fromVideo.volume;
+  }
+  if (time) video.addEventListener('loadedmetadata', () => { video.currentTime = time; });
+  stage.appendChild(video);
+
+  theater = { video, fromVideo, wasPlaying };
+
+  overlay.hidden = false;
+  requestAnimationFrame(() => overlay.classList.add('is-visible'));
+  video.play().catch(() => {});
+  $('#theaterCloseBtn').focus();
+}
+
+function closeTheater() {
+  const overlay = $('#theaterOverlay');
+  if (!overlay || !theater) return;
+
+  const { video, fromVideo, wasPlaying } = theater;
+  const time = video && Number.isFinite(video.currentTime) ? video.currentTime : 0;
+  theater = null;
+
+  if (video) {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+  }
+  $('#theaterStage').innerHTML = '';
+
+  overlay.classList.remove('is-visible');
+  setTimeout(() => { overlay.hidden = true; }, 220);
+
+  // 把播放进度还回右侧预览里的那个视频，衔接得上
+  if (fromVideo && fromVideo.isConnected) {
+    try {
+      fromVideo.currentTime = time;
+    } catch (_) { /* 元数据还没加载好就算了 */ }
+    if (wasPlaying) fromVideo.play().catch(() => {});
+  }
 }
 
 // ===== 压缩备份：把一个分组打包成 library/zip/<分组名>.zip =====
@@ -2850,6 +2952,18 @@ function initEvents() {
     setPanelFold('list', !$('.workspace').classList.contains('is-list-collapsed'));
   });
 
+  // ===== 视频大播放器：关闭按钮 / 点空白 / Esc =====
+  $('#theaterCloseBtn').addEventListener('click', closeTheater);
+  $('#theaterOverlay').addEventListener('click', (e) => {
+    if (e.target === $('#theaterOverlay')) closeTheater();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && theater) {
+      e.preventDefault();
+      closeTheater();
+    }
+  });
+
   // ===== 音乐播放器 =====
   const musicAudio = audioEl();
   let musicSeeking = false;
@@ -3215,6 +3329,7 @@ function initEvents() {
 async function init() {
   state.items = await loadItems();
   state.groups = await loadGroups();
+  installVideoFullscreenIntercept();
   renderFolders();
   renderGrid();
   initEvents();
