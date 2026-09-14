@@ -2941,10 +2941,8 @@ function initTitleBar() {
   });
 }
 
-// ===== 连按两下 J：收起整个窗口；收起来之后再连按两下 J 恢复 =====
-const J_TOGGLE_MS = 500;
-const J_HINT_KEY = 'memorie.hotkeyHint';
-let lastJPressAt = 0;
+// ===== Shift+Z：收起整个窗口；收起来之后再按一次 Shift+Z 恢复 =====
+const HOTKEY_HINT_KEY = 'memorie.hideHotkeyHint2';
 
 function isTypingTarget(el) {
   if (!el) return false;
@@ -2952,20 +2950,14 @@ function isTypingTarget(el) {
   return /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName || '');
 }
 
-function onDoubleJKeydown(e) {
+function onHideHotkeyKeydown(e) {
   if (e.isComposing) return; // 中文输入法组字中不算
-  const isJ = e.code === 'KeyJ' || String(e.key).toLowerCase() === 'j';
-  if (!isJ || e.repeat) return;
-  if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+  if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (e.code !== 'KeyZ' && String(e.key).toLowerCase() !== 'z') return;
+  if (e.repeat) return;
   // 正在输入文字时不触发（搜索框、分组重命名、笔记正文…）
   if (isTypingTarget(e.target) || isTypingTarget(document.activeElement)) return;
 
-  const now = Date.now();
-  if (now - lastJPressAt > J_TOGGLE_MS) {
-    lastJPressAt = now;
-    return;
-  }
-  lastJPressAt = 0;
   hideWindowByHotkey();
 }
 
@@ -2973,9 +2965,9 @@ function hideWindowByHotkey() {
   if (!window.electronAPI?.hideWindowWithHotkey) return;
 
   // 第一次用先把"怎么恢复"说清楚，之后再按就立即收起
-  if (!localStorage.getItem(J_HINT_KEY)) {
-    localStorage.setItem(J_HINT_KEY, '1');
-    showToast('已收起窗口 · 想恢复时再连按两下 J', { duration: 1600 });
+  if (!localStorage.getItem(HOTKEY_HINT_KEY)) {
+    localStorage.setItem(HOTKEY_HINT_KEY, '1');
+    showToast('已收起窗口 · 想恢复时再按一次 Shift+Z', { duration: 1600 });
     setTimeout(() => window.electronAPI.hideWindowWithHotkey(), 1400);
     return;
   }
@@ -2993,8 +2985,8 @@ function initEvents() {
     setPanelFold('list', !$('.workspace').classList.contains('is-list-collapsed'));
   });
 
-  // 连按两下 J：收起窗口（恢复靠主进程的全局快捷键）
-  document.addEventListener('keydown', onDoubleJKeydown);
+  // Shift+Z：收起窗口（恢复靠主进程的全局快捷键）
+  document.addEventListener('keydown', onHideHotkeyKeydown);
 
   // ===== 视频大播放器：关闭按钮 / 点空白 / Esc =====
   $('#theaterCloseBtn').addEventListener('click', closeTheater);

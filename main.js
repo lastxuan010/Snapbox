@@ -93,19 +93,17 @@ ipcMain.on('window-close', (event) => {
   if (win) win.close();
 });
 
-// ---------- 连按两下 J：收起窗口 / 再连按两下恢复 ----------
-// 窗口收起后渲染进程收不到键盘事件，所以"再按两下恢复"只能由全局快捷键接管；
-// 且只在窗口被这样收起期间注册，一恢复就注销，避免长期占用 J 键。
-const J_PRESS_MS = 500;
+// ---------- Shift+Z：收起窗口 / 再按一次恢复 ----------
+// 窗口收起后渲染进程收不到键盘事件，所以"恢复"只能由全局快捷键接管；
+// 且只在窗口被这样收起期间注册，一恢复就注销，避免长期占用组合键。
+const HIDE_HOTKEY = 'Shift+Z';
 let restoreHotkeyArmed = false;
-let lastGlobalJAt = 0;
 
 function disarmRestoreHotkey() {
   if (!restoreHotkeyArmed) return;
   restoreHotkeyArmed = false;
-  lastGlobalJAt = 0;
   try {
-    globalShortcut.unregister('J');
+    globalShortcut.unregister(HIDE_HOTKEY);
   } catch (_) { /* ignore */ }
 }
 
@@ -120,21 +118,13 @@ function restoreFromHotkey(win) {
 function armRestoreHotkey(win) {
   if (restoreHotkeyArmed) return;
   restoreHotkeyArmed = true;
-  lastGlobalJAt = 0;
 
-  const ok = globalShortcut.register('J', () => {
-    const now = Date.now();
-    if (now - lastGlobalJAt <= J_PRESS_MS) {
-      restoreFromHotkey(win);
-      return;
-    }
-    lastGlobalJAt = now;
-  });
+  const ok = globalShortcut.register(HIDE_HOTKEY, () => restoreFromHotkey(win));
 
   if (!ok) {
     // 注册不上也不影响：还能用任务栏把窗口点回来
     restoreHotkeyArmed = false;
-    console.warn('[hotkey] 全局 J 注册失败，请用任务栏恢复窗口');
+    console.warn('[hotkey] 全局 ' + HIDE_HOTKEY + ' 注册失败，请用任务栏恢复窗口');
   }
 }
 
