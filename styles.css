@@ -1083,6 +1083,8 @@ body {
 .toast.is-visible {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+  /* 默认 none 只是为了避免隐藏时挡操作，显示后必须恢复，否则里面的按钮点不动 */
+  pointer-events: auto;
 }
 
 /* Toolbar actions */

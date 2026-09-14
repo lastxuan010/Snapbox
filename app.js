@@ -1652,12 +1652,15 @@ async function archiveItemsToZip(label, items) {
   // 大文件打包耗时较久，先给"进行中"提示，并订阅进度
   const noteCount = items.filter((i) => i.type === 'note').length;
   const noteHint = noteCount ? `，含 ${noteCount} 篇笔记` : '';
+  let packed = false;
   showToast(`正在打包「${label}」…共 ${items.length} 项${noteHint}`, { duration: 120000 });
   window.electronAPI?.onArchiveProgress?.((p) => {
+    if (packed) return; // 迟到的进度事件别把"已完成"提示覆盖掉
     if (p && p.total) showToast(`正在打包「${label}」… ${p.entries}/${p.total}`, { duration: 120000 });
   });
 
   const res = await window.electronAPI.archiveItems({ label, items: payloadItems });
+  packed = true;
   window.electronAPI?.onArchiveProgress?.(() => {});
 
   if (!res || !res.ok) {
