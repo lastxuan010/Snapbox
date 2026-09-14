@@ -895,6 +895,9 @@ function renderGrid() {
   // 有勾选时进入「批量模式」：所有卡片的左上角勾选框都显示出来，点一下就切换
   grid.classList.toggle('is-batch-mode', state.selection.size > 0);
 
+  // 列表 / 分组 / 筛选 / 选中项变化都会影响"上一个 / 下一个"是否可用
+  updatePreviewNav();
+
   $('.panel--left').classList.toggle('is-music', musicMode);
   $('#musicView').hidden = !musicMode;
   grid.hidden = musicMode;
@@ -1415,6 +1418,7 @@ function resetPreview() {
   $('#notePreview').hidden = true;
   $('#metaPanel').hidden = true;
   enterMarkdownMode(false, true);
+  updatePreviewNav();
 }
 
 // 执行删除：deleteFile 为 true 时把磁盘上的文件（库内文件 / 原文件）移入回收站
@@ -3090,6 +3094,38 @@ function hideWindowByHotkey() {
   window.electronAPI.hideWindowWithHotkey();
 }
 
+// ===== 预览区左右切换：跳到当前列表里的上一个 / 下一个资源 =====
+function updatePreviewNav() {
+  const prev = $('#previewPrevBtn');
+  const next = $('#previewNextBtn');
+  if (!prev || !next) return;
+
+  const items = currentListItems();
+  const idx = items.findIndex((i) => i.id === state.selectedId);
+  // 只有一个项目、或当前选中项不在这个列表里 → 不显示
+  const useless = items.length < 2 || idx === -1;
+
+  prev.hidden = useless;
+  next.hidden = useless;
+  prev.disabled = idx <= 0;
+  next.disabled = idx === -1 || idx >= items.length - 1;
+}
+
+function stepPreview(delta) {
+  const items = currentListItems();
+  const idx = items.findIndex((i) => i.id === state.selectedId);
+  if (idx === -1) return;
+
+  const target = items[idx + delta];
+  if (!target) return;
+
+  selectItem(target.id);
+  // 让中栏里对应的卡片 / 歌曲行也滚进可视范围
+  const el = document.querySelector(`.thumb-card[data-id="${target.id}"]`)
+    || document.querySelector(`.music-row[data-id="${target.id}"]`);
+  if (el) el.scrollIntoView({ block: 'nearest' });
+}
+
 function initEvents() {
   initTitleBar();
 
@@ -3103,6 +3139,10 @@ function initEvents() {
 
   // Shift+Z：收起窗口（恢复靠主进程的全局快捷键）
   document.addEventListener('keydown', onHideHotkeyKeydown);
+
+  // 预览区左右切换按钮
+  $('#previewPrevBtn').addEventListener('click', () => stepPreview(-1));
+  $('#previewNextBtn').addEventListener('click', () => stepPreview(1));
 
   // ===== 视频大播放器：关闭按钮 / 点空白 / Esc =====
   $('#theaterCloseBtn').addEventListener('click', closeTheater);

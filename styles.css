@@ -847,6 +847,14 @@ body {
   background: var(--background);
 }
 
+.preview-area {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .preview-stage {
   flex: 1;
   min-height: 0;
@@ -859,6 +867,63 @@ body {
   overflow: hidden;
   position: relative;
   box-shadow: var(--shadow-xs);
+}
+
+/* 预览区左右切换按钮：鼠标移到预览区（图片/视频/笔记都算）才出现 */
+.preview-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 4;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(29, 29, 31, 0.55);
+  color: #fff;
+  font-family: inherit;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, background-color 0.15s ease;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  box-shadow: var(--shadow-sm);
+}
+
+.preview-area:hover .preview-nav {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.preview-nav--prev {
+  left: 12px;
+}
+
+.preview-nav--next {
+  right: 12px;
+}
+
+.preview-nav:hover:not(:disabled) {
+  background: var(--primary);
+}
+
+/* "到头了"只在悬停出现时变暗，鼠标移开还是要完全隐藏 */
+.preview-nav:disabled {
+  cursor: default;
+}
+
+.preview-area:hover .preview-nav:disabled {
+  opacity: 0.25;
+}
+
+.preview-nav[hidden] {
+  display: none;
 }
 
 .preview-stage img,

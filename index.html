@@ -95,13 +95,18 @@
 
       <section class="viewer">
         <div class="panel panel--right" id="previewPanel">
-          <div class="preview-stage" id="previewStage">
+          <div class="preview-area" id="previewArea">
+            <div class="preview-stage" id="previewStage">
                 <div class="preview-placeholder">
                   <img class="preview-placeholder__art" src="assets/empty-preview.png" alt="">
                   <p>选择一个项目查看详情</p>
                 </div>
               </div>
               <div class="note-preview" id="notePreview" hidden></div>
+
+            <button type="button" class="preview-nav preview-nav--prev" id="previewPrevBtn" title="上一个资源" aria-label="上一个资源" hidden>‹</button>
+            <button type="button" class="preview-nav preview-nav--next" id="previewNextBtn" title="下一个资源" aria-label="下一个资源" hidden>›</button>
+          </div>
 
           <div class="meta-panel" id="metaPanel" hidden>
             <div class="meta-header">
