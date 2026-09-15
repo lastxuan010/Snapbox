@@ -544,11 +544,15 @@ body {
 /* Filter chips */
 .filter-bar {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .filter-chip {
-  flex: 1;
+  /* 6 个分类（含「其他文件」）一行放不下，给个最小宽度后允许换行，文案保持单行不折断 */
+  flex: 1 1 auto;
+  min-width: 54px;
+  white-space: nowrap;
   padding: 7px 0;
   background: transparent;
   border: 1px solid var(--input-border);
@@ -667,6 +671,20 @@ body {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+/* 「其他文件」没有缩略图，封面用扩展名代替 */
+.thumb-card__media--file {
+  display: grid;
+  place-items: center;
+  background: repeating-linear-gradient(45deg, #ececf0, #ececf0 8px, #e2e2e8 8px, #e2e2e8 16px);
+  color: #8e8e93;
+  letter-spacing: 0.5px;
+}
+
+.thumb-card__media--file b {
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .thumb-card__badge {
@@ -2774,6 +2792,13 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--primary);
   font-size: 52px;
   box-shadow: var(--shadow-xs);
+}
+
+/* 「其他文件」的预览卡：图标位置放扩展名，字号得小一些 */
+.audio-stage__art--file {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 1px;
 }
 
 .audio-stage__name {

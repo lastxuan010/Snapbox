@@ -39,7 +39,7 @@
           <div class="toolbar">
             <div class="toolbar__actions">
               <label class="btn btn--primary" id="addMediaBtn">
-                <input type="file" id="fileInput" multiple accept="image/*,video/*,audio/*" hidden>
+                <input type="file" id="fileInput" multiple hidden>
                 <span class="btn__icon">+</span>
                 <span class="btn__text">添加媒体</span>
               </label>
@@ -62,6 +62,7 @@
             <button class="filter-chip" data-filter="video">视频</button>
             <button class="filter-chip" data-filter="audio">音频</button>
             <button class="filter-chip" data-filter="note">笔记</button>
+            <button class="filter-chip" data-filter="other">其他文件</button>
           </div>
 
           <div class="batch-bar" id="batchBar" hidden>
@@ -77,8 +78,8 @@
           <div class="thumb-grid" id="thumbGrid">
             <div class="empty-state" id="emptyState">
               <div class="empty-state__icon">◫</div>
-              <p>暂无媒体文件</p>
-              <p class="empty-state__hint">点击上方按钮导入图片或视频</p>
+              <p>暂无文件</p>
+              <p class="empty-state__hint">点击上方按钮导入图片、视频或任意文件</p>
             </div>
           </div>
 

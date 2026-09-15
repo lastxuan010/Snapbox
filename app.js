@@ -501,6 +501,55 @@ async function restoreItems(snapshots) {
   showToast('已撤销删除');
 }
 
+// 判断文件属于哪一类：图片 / 视频 / 音频 / 其他文件
+// （系统给不出 MIME 的冷门格式，按扩展名再判一次；仍认不出来就归「其他文件」）
+const EXT_KINDS = {
+  video: ['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v', 'wmv', 'flv', 'mpg', 'mpeg', 'ts', '3gp'],
+  audio: ['mp3', 'wav', 'flac', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'wma', 'aiff', 'aif', 'mid', 'amr'],
+  image: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif', 'ico', 'tif', 'tiff', 'heic']
+};
+
+function kindOfFile(file) {
+  const mime = String((file && file.type) || '');
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('audio/')) return 'audio';
+  const ext = String((file && file.name) || '').split('.').pop().toLowerCase();
+  for (const kind of Object.keys(EXT_KINDS)) {
+    if (EXT_KINDS[kind].includes(ext)) return kind;
+  }
+  return 'other';
+}
+
+// 「其他文件」没有缩略图，封面 / 预览卡就用扩展名代替图标
+function fileExtLabel(name) {
+  const parts = String(name || '').split('.');
+  const ext = parts.length > 1 ? parts.pop().toLowerCase() : '';
+  return ext ? ext.slice(0, 5).toUpperCase() : 'FILE';
+}
+
+function isOtherItem(item) {
+  return Boolean(item) && item.type === 'other';
+}
+
+// 其他文件：给一张"文件卡"，显示扩展名与文件名（不做内容预览）
+function renderOtherPreview(stage, item) {
+  const wrap = document.createElement('div');
+  wrap.className = 'audio-stage';
+
+  const art = document.createElement('div');
+  art.className = 'audio-stage__art audio-stage__art--file';
+  art.textContent = fileExtLabel(item.name);
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'audio-stage__name';
+  nameEl.textContent = item.name;
+
+  wrap.appendChild(art);
+  wrap.appendChild(nameEl);
+  stage.appendChild(wrap);
+}
+
 async function addFiles(files) {
   const targetGroupId = state.selectedGroupId !== 'all' && state.selectedGroupId !== 'ungrouped'
     ? state.selectedGroupId
@@ -514,11 +563,8 @@ async function addFiles(files) {
   const undoSteps = [];
 
   for (const file of files) {
-    const mediaType = file.type.startsWith('video/') ? 'video'
-      : file.type.startsWith('audio/') ? 'audio'
-      : file.type.startsWith('image/') ? 'image'
-      : '';
-    if (!mediaType) continue;
+    // 图片 / 视频 / 音频 / 其他文件：认不出类型的（pdf、zip、txt…）统一归「其他文件」
+    const mediaType = kindOfFile(file);
 
     const id = generateId();
     const sourcePath = window.electronAPI?.getPathForFile
@@ -526,14 +572,15 @@ async function addFiles(files) {
       : '';
 
     // 缩略图 / 时长必须在移动文件本体之前生成（之后原路径就不存在了）
-    const dataURL = await readFileAsDataURL(file);
+    // 「其他文件」不做缩略图、也不整个读进内存（可能是几百 MB 的压缩包），封面只显示扩展名
+    const dataURL = (mediaType === 'other' && sourcePath) ? '' : await readFileAsDataURL(file);
     let thumbnail = '';
     let duration = 0;
     if (mediaType === 'video') {
       thumbnail = (await getVideoThumbnail(dataURL)) || dataURL;
     } else if (mediaType === 'audio') {
       duration = await getAudioDuration(dataURL);
-    } else {
+    } else if (mediaType === 'image') {
       thumbnail = await getImageThumbnail(dataURL);
     }
 
@@ -688,7 +735,7 @@ function musicGroupBlocker(groupId) {
     kinds.set(item.type, (kinds.get(item.type) || 0) + 1);
   }
   if (!kinds.size) return '';
-  const label = { image: '图片', video: '视频', note: '笔记' };
+  const label = { image: '图片', video: '视频', note: '笔记', other: '其他文件' };
   const parts = [...kinds].map(([type, n]) => `${n} 个${label[type] || type}`);
   return `该分组里有 ${parts.join('、')}，不能设为音乐分组`;
 }
@@ -713,16 +760,17 @@ function getMusicItems() {
 
 function renderFolders() {
   const list = $('#folderList');
-  const systemGroups = [
-    { id: 'all', name: '全部', icon: '▤' },
-    { id: 'ungrouped', name: getUngroupedName(), icon: '▣' }
+  // 侧栏只列分组：「全部」不再单独占一行 —— 没选中任何分组时就是「全部」，
+  // 再点一次已选中的分组即可取消选择、回到「全部」
+  const allGroups = [
+    { id: 'ungrouped', name: getUngroupedName(), icon: '▣' },
+    ...state.groups
   ];
-  const allGroups = [...systemGroups, ...state.groups];
 
   list.innerHTML = allGroups.map((group) => {
     const isActive = group.id === state.selectedGroupId;
     const count = countItemsInGroup(group.id);
-    const isCustom = !['all', 'ungrouped'].includes(group.id);
+    const isCustom = group.id !== 'ungrouped';
     return `
       <div class="folder-item ${isActive ? 'is-active' : ''}" data-id="${group.id}">
         <div class="folder-item__main">
@@ -781,14 +829,13 @@ function renderFolders() {
   $$('.folder-item__main').forEach((main) => {
     const id = main.querySelector('.folder-item__name').dataset.id;
     main.addEventListener('click', (e) => {
-      // 双击：进入重命名（仅"全部"不可改；未分组也可改名）
+      // 双击：进入重命名（未分组也可改名）
       if (e.detail === 2) {
-        if (id !== 'all') {
-          startRenameGroup(id);
-        }
+        startRenameGroup(id);
         return;
       }
-      state.selectedGroupId = id;
+      // 再点一次已选中的分组 = 取消选择，回到「全部」
+      state.selectedGroupId = state.selectedGroupId === id ? 'all' : id;
       renderFolders();
       renderGrid();
     });
@@ -948,16 +995,20 @@ function renderGrid() {
   } else {
     grid.innerHTML = items.map((item) => {
       const isNote = item.type === 'note';
+      const isOther = isOtherItem(item);
       const linked = isItemLinked(item);
       const media = isNote
         ? `<div class="thumb-card__media">✎</div>`
         : item.type === 'audio'
           ? `<div class="thumb-card__media">♪</div>`
-          : `<img class="thumb-card__media" src="${item.thumbnail}" alt="${escapeHtml(item.name)}" loading="lazy" draggable="false">`;
+          : isOther
+            ? `<div class="thumb-card__media thumb-card__media--file"><b>${escapeHtml(fileExtLabel(item.name))}</b></div>`
+            : `<img class="thumb-card__media" src="${item.thumbnail}" alt="${escapeHtml(item.name)}" loading="lazy" draggable="false">`;
       const badge = isNote ? '✎'
         : linked ? '⤳'
         : item.type === 'video' ? '▶'
         : item.type === 'audio' ? '♪'
+        : isOther ? '▦'
         : '◈';
       const badgeTip = linked ? ' title="链接（未导入，依赖原文件）"' : '';
       const name = isNote ? getNoteExcerpt(item.description) : item.name;
@@ -1062,7 +1113,7 @@ function renderGrid() {
     });
   }
 
-  const filterLabels = { all: '全部', image: '图片', video: '视频', audio: '音频', note: '笔记' };
+  const filterLabels = { all: '全部', image: '图片', video: '视频', audio: '音频', note: '笔记', other: '其他文件' };
   $('#statusCount').textContent = `${items.length} 个项目`;
   $('#statusType').textContent = filterLabels[state.filter] || '全部';
 }
@@ -1242,12 +1293,15 @@ async function selectItem(id) {
     stage.hidden = false;
     stage.innerHTML = '<div class="preview-placeholder"><p>加载中…</p></div>';
 
-    const preview = await resolvePreviewUrl(item);
+    // 「其他文件」不做内容预览（可能是几百 MB 的压缩包，也不是能直接显示的类型）
+    const preview = isOtherItem(item) ? { ok: true, other: true } : await resolvePreviewUrl(item);
     // 期间用户可能已切换选中项
     if (state.selectedId !== item.id) return;
     stage.innerHTML = '';
 
-    if (!preview.ok) {
+    if (preview.other) {
+      renderOtherPreview(stage, item);
+    } else if (!preview.ok) {
       showMissingPreview(stage, item);
     } else if (item.type === 'audio') {
       const wrap = document.createElement('div');
@@ -1304,8 +1358,10 @@ async function selectItem(id) {
   } else {
     const diskPath = itemDiskPath(item);
     const stateLabel = isItemLinked(item) ? '链接（未入库）' : '已入库';
+    // 「其他文件」没有 MIME，用扩展名（如 PDF 文件）代替
+    const kindLabel = isOtherItem(item) ? `${fileExtLabel(item.name)} 文件` : item.mime;
     const pathLabel = diskPath ? ` · ${diskPath}` : '';
-    $('#fileInfo').textContent = `${stateLabel} · ${item.mime} · ${formatFileSize(item.size)} · ${new Date(item.createdAt).toLocaleString('zh-CN')}${pathLabel}`;
+    $('#fileInfo').textContent = `${stateLabel} · ${kindLabel} · ${formatFileSize(item.size)} · ${new Date(item.createdAt).toLocaleString('zh-CN')}${pathLabel}`;
     $('#fileInfo').title = diskPath;
   }
 
