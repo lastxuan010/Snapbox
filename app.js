@@ -1512,7 +1512,7 @@ function resetPreview() {
   stage.hidden = false;
   stage.innerHTML = `
     <div class="preview-placeholder">
-      <img class="preview-placeholder__art" src="assets/empty-preview.gif" alt="">
+      <img class="preview-placeholder__art" src="assets/empty-preview.webp" alt="">
       <p>选择一个项目查看详情</p>
     </div>
   `;
