@@ -208,6 +208,25 @@
     </div>
   </div>
 
+  <!-- 空态动图自带的纯蓝底，用滤镜映射成底色（不重新编码图片，动画得以保留） -->
+  <svg class="svg-filters" aria-hidden="true" focusable="false">
+    <filter id="artBlueToWhite" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <!-- 以"蓝色主导度"当遮罩：#0010FE 得到 alpha=1，角色的暖色/中性色接近 0；
+           略微抬阈值，让角色边缘抗锯齿混出来的淡蓝描边也一起变白 -->
+      <feColorMatrix in="SourceGraphic" type="matrix" result="mask"
+        values="0 0 0 0 0
+                0 0 0 0 0
+                0 0 0 0 0
+                -0.9 -0.9 1.8 0 -0.06" />
+      <feFlood flood-color="#ffffff" result="bg" />
+      <feComposite in="bg" in2="mask" operator="in" result="bgLayer" />
+      <feMerge>
+        <feMergeNode in="SourceGraphic" />
+        <feMergeNode in="bgLayer" />
+      </feMerge>
+    </filter>
+  </svg>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <div class="context-menu" id="contextMenu" hidden></div>
