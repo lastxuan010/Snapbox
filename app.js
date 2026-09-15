@@ -671,13 +671,26 @@ function isMusicGroup(groupId) {
 }
 
 // 老数据迁移：以前靠"分组名含音乐"判断，首次加载时把这类分组补上标记
-// （isMusic 已存在就不再改，所以手动取消过的分组不会被重新标上）
+// （和旧行为一致：名字含音乐的分组本来就用播放器列表，里面的非音频资源同样是看不到的）
 async function migrateMusicGroups() {
   for (const group of state.groups) {
     if (group.isMusic !== undefined) continue;
     group.isMusic = String(group.name || '').includes('音乐');
     await saveGroup(group);
   }
+}
+
+// 能否设为音乐分组：分组里不能有音频以外的资源（空分组可以）
+function musicGroupBlocker(groupId) {
+  const kinds = new Map();
+  for (const item of state.items) {
+    if (item.groupId !== groupId || item.type === 'audio') continue;
+    kinds.set(item.type, (kinds.get(item.type) || 0) + 1);
+  }
+  if (!kinds.size) return '';
+  const label = { image: '图片', video: '视频', note: '笔记' };
+  const parts = [...kinds].map(([type, n]) => `${n} 个${label[type] || type}`);
+  return `该分组里有 ${parts.join('、')}，不能设为音乐分组`;
 }
 
 // 播放器列表：只看当前分组里的音频，按文件名排序（顶部搜索框可按歌名过滤）
@@ -2188,17 +2201,24 @@ async function handleGroupContextAction(action) {
     await removeGroup(groupId);
     return;
   }
-  if (action === 'toggleMusicGroup') {
+  if (action === 'setMusicGroup') {
     const group = state.groups.find((g) => g.id === groupId);
     if (!group) return;
-    group.isMusic = !group.isMusic;
+    if (group.isMusic) {
+      showToast('已经是音乐分组了，不能取消');
+      return;
+    }
+    const blocker = musicGroupBlocker(groupId);
+    if (blocker) {
+      showToast(blocker);
+      return;
+    }
+    group.isMusic = true;
     await saveGroup(group);
     renderFolders();
     renderGrid();
     renderMetaGroupOptions();
-    showToast(group.isMusic
-      ? `「${group.name}」已设为音乐分组，中栏改用播放器列表`
-      : `「${group.name}」已取消音乐分组`);
+    showToast(`「${group.name}」已设为音乐分组，中栏改用播放器列表`);
     return;
   }
   if (action === 'archiveGroup') {
@@ -2229,11 +2249,23 @@ function openGroupContextMenu(e, groupId) {
   }
   if (groupId !== 'all' && groupId !== 'ungrouped') {
     const group = state.groups.find((g) => g.id === groupId) || {};
-    rows.push({
-      label: group.isMusic ? '✓ 已设为音乐分组（点击取消）' : '设为音乐分组',
-      action: 'toggleMusicGroup',
-      tip: '音乐分组的中栏会用播放器列表显示'
-    });
+    if (group.isMusic) {
+      // 单向：已经设过的不能取消
+      rows.push({
+        label: '✓ 已是音乐分组（不可取消）',
+        action: 'none',
+        disabled: true,
+        tip: '音乐分组只能开启，不能关闭'
+      });
+    } else {
+      const blocker = musicGroupBlocker(groupId);
+      rows.push({
+        label: '设为音乐分组',
+        action: 'setMusicGroup',
+        disabled: Boolean(blocker),
+        tip: blocker || '音乐分组的中栏会用播放器列表显示'
+      });
+    }
     rows.push({ label: '删除分组', action: 'deleteGroup', danger: true });
   }
   rows.push({ separator: true });
