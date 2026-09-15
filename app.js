@@ -2024,8 +2024,15 @@ async function toggleRecording() {
       if (!chunks.length) { showToast('录屏内容为空'); return; }
 
       const id = generateId();
+      // webm 没有时长头，把实际录了多久一起交给主进程写进去（否则播放器显示 ∞）
+      const durationMs = Math.max(1, Date.now() - startedAt);
       const buffer = await new Blob(chunks, { type: 'video/webm' }).arrayBuffer();
-      const res = await window.electronAPI?.saveCapture?.({ id, ext: '.webm', bytes: new Uint8Array(buffer) });
+      const res = await window.electronAPI?.saveCapture?.({
+        id,
+        ext: '.webm',
+        bytes: new Uint8Array(buffer),
+        durationMs
+      });
       if (!res || !res.ok) {
         showToast('录屏保存失败：' + ((res && res.error) || '未知错误'));
         return;
@@ -2034,6 +2041,7 @@ async function toggleRecording() {
     };
 
     mediaRecorder = recorder;
+    const startedAt = Date.now();
     recorder.start(1000);
 
     // 指示灯：常驻置顶，随时能看见"正在录屏 + 计时"，点「停止」也能结束

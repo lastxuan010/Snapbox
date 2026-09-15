@@ -687,13 +687,144 @@ ipcMain.on('set-capture-group', (event, name) => {
   if (clean) captureGroupName = clean;
 });
 
+// ---------- 给录屏的 webm 补上时长 ----------
+// MediaRecorder 边录边写，一开始不知道总时长，所以写出来的 webm 没有 Duration 元素，
+// 播放器读到的时长是 ∞、进度条也拖不动。这里把时长补回去。
+//
+// 为什么能"插进去就不管了"：
+//   1) Duration 只能放在 Info 里，所以在 Info 末尾插一个 11 字节的 Duration 元素
+//      （ID 2 字节 + 长度 1 字节 + float64 8 字节），再把 Info 的长度字段加上对应字节数；
+//   2) MediaRecorder 写的 Segment 是"未知长度"，不用同步改；
+//   3) 文件里没有 SeekHead / Cues（它们存的是绝对偏移，插字节后会指错），
+//      真有的话这里会直接放弃修改，宁可保持原样也不写出坏文件。
+function encodeEbmlSize(value, len) {
+  const max = Math.pow(2, 7 * len) - 2;
+  if (!(value >= 0) || value > max) return null;
+  const out = Buffer.alloc(len);
+  let v = value;
+  for (let i = len - 1; i >= 0; i--) {
+    out[i] = v % 256;
+    v = Math.floor(v / 256);
+  }
+  out[0] |= 1 << (8 - len);
+  return out;
+}
+
+function readEbmlElement(buf, pos) {
+  if (pos < 0 || pos >= buf.length) return null;
+  const first = buf[pos];
+  if (!first) return null;
+
+  let idLen = 1;
+  for (let i = 0; i < 4; i++) {
+    if (first & (0x80 >> i)) { idLen = i + 1; break; }
+  }
+  let id = 0;
+  for (let i = 0; i < idLen; i++) id = id * 256 + buf[pos + i];
+
+  const sizeFirst = buf[pos + idLen];
+  if (sizeFirst === undefined || sizeFirst === 0) return null;
+  let sizeLen = 1;
+  for (let i = 0; i < 8; i++) {
+    if (sizeFirst & (0x80 >> i)) { sizeLen = i + 1; break; }
+  }
+  let size = sizeFirst & (0xFF >> sizeLen);
+  let allOnes = size === (0xFF >> sizeLen);
+  for (let i = 1; i < sizeLen; i++) {
+    const b = buf[pos + idLen + i];
+    size = size * 256 + b;
+    if (b !== 0xFF) allOnes = false;
+  }
+  const dataStart = pos + idLen + sizeLen;
+  return {
+    id, idLen, sizeLen,
+    pos,
+    sizePos: pos + idLen,
+    dataStart,
+    size: allOnes ? null : size,
+    dataEnd: allOnes ? buf.length : Math.min(buf.length, dataStart + size)
+  };
+}
+
+function patchWebmDuration(buf, durationMs) {
+  try {
+    const ebml = readEbmlElement(buf, 0);
+    if (!ebml || ebml.id !== 0x1A45DFA3) return buf;           // EBML
+    const seg = readEbmlElement(buf, ebml.dataEnd);
+    if (!seg || seg.id !== 0x18538067) return buf;             // Segment
+
+    // 找 Info；顺带确认没有偏移表（有就放弃，免得改坏）
+    let info = null;
+    let pos = seg.dataStart;
+    while (pos < seg.dataEnd) {
+      const el = readEbmlElement(buf, pos);
+      if (!el || el.dataEnd <= pos) return buf;
+      if (el.id === 0x114D9B74 || el.id === 0x1C53BB6B) {      // SeekHead / Cues
+        console.warn('[capture] webm 里带偏移表，跳过补时长');
+        return buf;
+      }
+      if (el.id === 0x1549A966) { info = el; break; }          // Info
+      pos = el.dataEnd;
+    }
+    if (!info || info.size === null) return buf;
+
+    // Info 里已经有 Duration 就不重复写
+    let timecodeScale = 1000000;
+    for (let p = info.dataStart; p < info.dataEnd;) {
+      const c = readEbmlElement(buf, p);
+      if (!c || c.dataEnd <= p) break;
+      if (c.id === 0x4489) return buf;                         // Duration 已存在
+      if (c.id === 0x2AD7B1 && c.size) timecodeScale = buf.readUIntBE(c.dataStart, c.size);
+      p = c.dataEnd;
+    }
+
+    const dur = Buffer.alloc(11);
+    dur.writeUInt16BE(0x4489, 0);
+    dur.writeUInt8(0x88, 2);                                   // 长度字段：8 字节
+    // Duration 的单位是 TimecodeScale（默认 1000000ns，也就是 1ms）
+    dur.writeDoubleBE(Math.max(1, durationMs) * 1e6 / timecodeScale, 3);
+
+    const infoData = Buffer.concat([buf.subarray(info.dataStart, info.dataEnd), dur]);
+    let sizeBuf = encodeEbmlSize(infoData.length, info.sizeLen);
+    for (let len = info.sizeLen + 1; !sizeBuf && len <= 8; len++) {
+      sizeBuf = encodeEbmlSize(infoData.length, len);
+    }
+    if (!sizeBuf) return buf;
+
+    const delta = (info.idLen + sizeBuf.length + infoData.length)
+      - (info.idLen + info.sizeLen + info.size);
+
+    const before = Buffer.from(buf.subarray(0, info.pos));      // 拷贝一份，便于顺带改 Segment 长度
+    if (seg.size !== null) {
+      const segSizeBuf = encodeEbmlSize(seg.size + delta, seg.sizeLen);
+      if (!segSizeBuf) return buf;
+      before.set(segSizeBuf, seg.sizePos);
+    }
+
+    return Buffer.concat([
+      before,
+      buf.subarray(info.pos, info.pos + info.idLen),
+      sizeBuf,
+      infoData,
+      buf.subarray(info.dataEnd)
+    ]);
+  } catch (err) {
+    console.warn('[capture] 补 webm 时长失败：' + ((err && err.message) || err));
+    return buf;
+  }
+}
+
 // 录屏由渲染进程（MediaRecorder）产出，这里只负责写进分组文件夹
 ipcMain.handle('save-capture', (event, payload) => {
   try {
     const id = (payload && payload.id) || newCaptureId();
     const ext = (payload && payload.ext) || '.bin';
     const bytes = (payload && payload.bytes) || [];
-    const buffer = Buffer.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+    let buffer = Buffer.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+    // 录屏的 webm 补上时长头，否则播放器显示 ∞、进度条拖不动
+    if (ext === '.webm' && payload && payload.durationMs > 0) {
+      buffer = patchWebmDuration(buffer, payload.durationMs);
+    }
     const dir = groupDir(captureGroupName, true);
     const file = path.join(dir, `${id}${ext}`);
     fs.writeFileSync(file, buffer);
