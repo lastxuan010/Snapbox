@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain, clipboard, shell, nativeImage, dialog, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, shell, nativeImage, dialog, globalShortcut,
+  desktopCapturer, screen, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -553,6 +554,113 @@ ipcMain.handle('open-zip-folder', () => {
   } catch (err) {
     return { ok: false, error: String((err && err.message) || err) };
   }
+});
+
+// ---------- 截图 / 录屏（F1 / F2）----------
+
+let captureGroupName = '截图/录屏';
+
+function newCaptureId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+// 截"鼠标所在那块屏幕"的原生分辨率画面，只负责返回 PNG 字节
+// （入库与落盘统一由渲染进程走 save-capture，和录屏共用一条路径）
+ipcMain.handle('capture-screen', async () => {
+  try {
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const scale = display.scaleFactor || 1;
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: {
+        width: Math.round(display.size.width * scale),
+        height: Math.round(display.size.height * scale)
+      }
+    });
+    if (!sources.length) return { ok: false, error: '没有找到可截取的屏幕' };
+
+    const source = sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
+    const image = source.thumbnail;
+    const size = image.getSize();
+    const buffer = image.toPNG();
+
+    return {
+      ok: true,
+      bytes: new Uint8Array(buffer),
+      width: size.width,
+      height: size.height,
+      size: buffer.length
+    };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
+function sendToRenderer(channel, payload) {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+}
+
+// 注册截图/录屏热键：主键被别的程序占用时自动降级到 Ctrl+ 组合，并告诉界面
+function registerCaptureHotkey(accelerator, fallback, handler, label) {
+  if (globalShortcut.register(accelerator, handler)) return accelerator;
+
+  if (globalShortcut.register(fallback, handler)) {
+    console.warn('[capture] ' + accelerator + ' 被占用，已改用 ' + fallback);
+    setTimeout(() => sendToRenderer('capture-hotkey-notice', {
+      message: label + ' 快捷键 ' + accelerator + ' 被其他程序占用，已临时改成 ' + fallback
+    }), 2000);
+    return fallback;
+  }
+
+  console.warn('[capture] ' + accelerator + ' 与 ' + fallback + ' 都注册失败');
+  setTimeout(() => sendToRenderer('capture-hotkey-notice', {
+    message: label + ' 快捷键注册失败（' + accelerator + ' 被其他程序占用）'
+  }), 2000);
+  return '';
+}
+
+// 渲染进程会告诉主进程"截图/录屏存哪个分组"
+ipcMain.on('set-capture-group', (event, name) => {
+  const clean = String(name == null ? '' : name).trim();
+  if (clean) captureGroupName = clean;
+});
+
+// 录屏由渲染进程（MediaRecorder）产出，这里只负责写进分组文件夹
+ipcMain.handle('save-capture', (event, payload) => {
+  try {
+    const id = (payload && payload.id) || newCaptureId();
+    const ext = (payload && payload.ext) || '.bin';
+    const bytes = (payload && payload.bytes) || [];
+    const buffer = Buffer.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+    const dir = groupDir(captureGroupName, true);
+    const file = path.join(dir, `${id}${ext}`);
+    fs.writeFileSync(file, buffer);
+    return { ok: true, id, path: file, size: buffer.length };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
+app.whenReady().then(() => {
+  // 录屏不弹选择框，直接用鼠标所在的那块屏幕
+  try {
+    session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+      desktopCapturer.getSources({ types: ['screen'] })
+        .then((list) => {
+          const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+          const source = list.find((s) => String(s.display_id) === String(display.id)) || list[0];
+          callback(source ? { video: source } : {});
+        })
+        .catch(() => callback({}));
+    });
+  } catch (err) {
+    console.warn('[capture] 录屏源处理器设置失败：' + err);
+  }
+
+  // F1 截图 / F2 开关录屏：全局注册，App 不在前台也能用
+  registerCaptureHotkey('F1', 'Control+F1', () => sendToRenderer('capture-take-screenshot'), '截图');
+  registerCaptureHotkey('F2', 'Control+F2', () => sendToRenderer('capture-toggle-recording'), '录屏');
 });
 
 app.on('window-all-closed', () => {

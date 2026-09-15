@@ -1718,6 +1718,171 @@ async function removeCurrentItem() {
   await confirmDeleteFlow([state.selectedId]);
 }
 
+// ===== 截图 / 录屏：F1 截图、F2 开关录屏，都存进默认分组「截图/录屏」=====
+const CAPTURE_GROUP_NAME = '截图/录屏';
+let mediaRecorder = null;
+let recordedChunks = [];
+
+// 默认分组不存在就建一个（同时建好磁盘上的同名文件夹）
+async function ensureCaptureGroup() {
+  let group = state.groups.find((g) => g.name === CAPTURE_GROUP_NAME);
+  if (!group) {
+    group = { id: generateId(), name: CAPTURE_GROUP_NAME, icon: '▦', createdAt: Date.now() };
+    state.groups.push(group);
+    await saveGroup(group);
+    await window.electronAPI?.ensureGroupFolder?.(group.name);
+    renderFolders();
+    renderMetaGroupOptions();
+  }
+  // 告诉主进程截图/录屏往哪个分组文件夹里写
+  window.electronAPI?.setCaptureGroup?.(CAPTURE_GROUP_NAME);
+  return group;
+}
+
+function captureFileName(kind) {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  return kind === 'video' ? `录屏 ${stamp}.webm` : `截图 ${stamp}.png`;
+}
+
+// 文件已经躺在分组文件夹里了，这里把它登记成 app 内的条目
+async function addCaptureItem(payload) {
+  const group = await ensureCaptureGroup();
+  const kind = payload && payload.kind === 'video' ? 'video' : 'image';
+
+  let thumbnail = '';
+  try {
+    const res = await window.electronAPI?.readFileDataUrl?.(payload.path);
+    if (res && res.ok) {
+      thumbnail = kind === 'video'
+        ? (await getVideoThumbnail(res.dataUrl)) || ''
+        : (await getImageThumbnail(res.dataUrl)) || '';
+    }
+  } catch (_) { /* 缩略图失败不影响入库 */ }
+
+  const item = {
+    id: payload.id || generateId(),
+    name: captureFileName(kind),
+    type: kind,
+    mime: kind === 'video' ? 'video/webm' : 'image/png',
+    size: payload.size || 0,
+    dataURL: '',
+    thumbnail,
+    backupPath: payload.path || '',
+    sourcePath: '',
+    createdAt: Date.now(),
+    time: formatDateTimeLocal(new Date()),
+    category: '',
+    description: '',
+    groupId: group.id,
+    duration: 0
+  };
+
+  state.items.push(item);
+  await saveItem(item);
+  renderFolders();
+  renderGrid();
+  showToast(`已存入「${CAPTURE_GROUP_NAME}」：${item.name}`, {
+    duration: 6000,
+    action: {
+      label: '查看',
+      onAction: () => {
+        state.selectedGroupId = group.id;
+        renderFolders();
+        renderGrid();
+        selectItem(item.id);
+      }
+    }
+  });
+  return item;
+}
+
+// F1：截当前屏幕 → 存进「截图/录屏」分组 → 登记成条目
+async function takeScreenshot() {
+  await ensureCaptureGroup();
+
+  const shot = await window.electronAPI?.captureScreen?.();
+  if (!shot || !shot.ok) {
+    showToast('截图失败：' + ((shot && shot.error) || '未知错误'));
+    return null;
+  }
+
+  const id = generateId();
+  const saved = await window.electronAPI?.saveCapture?.({ id, ext: '.png', bytes: shot.bytes });
+  if (!saved || !saved.ok) {
+    showToast('截图保存失败：' + ((saved && saved.error) || '未知错误'));
+    return null;
+  }
+
+  return addCaptureItem({ kind: 'image', id, path: saved.path, size: saved.size });
+}
+
+// ---- 录屏：F2 开始，再按 F2 结束 ----
+function stopRecording() {
+  if (!mediaRecorder) return;
+  try { mediaRecorder.stop(); } catch (_) { /* ignore */ }
+  mediaRecorder = null;
+  showToast('正在保存录屏…', { duration: 4000 });
+}
+
+async function toggleRecording() {
+  if (mediaRecorder) {
+    stopRecording();
+    return;
+  }
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    showToast('当前环境不支持录屏');
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size) recordedChunks.push(e.data);
+    };
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const chunks = recordedChunks;
+      recordedChunks = [];
+      if (!chunks.length) { showToast('录屏内容为空'); return; }
+
+      const id = generateId();
+      const buffer = await new Blob(chunks, { type: 'video/webm' }).arrayBuffer();
+      const res = await window.electronAPI?.saveCapture?.({ id, ext: '.webm', bytes: new Uint8Array(buffer) });
+      if (!res || !res.ok) {
+        showToast('录屏保存失败：' + ((res && res.error) || '未知错误'));
+        return;
+      }
+      await addCaptureItem({ kind: 'video', id, path: res.path, size: res.size });
+    };
+
+    mediaRecorder.start(1000);
+    showToast('已开始录屏 · 再按 F2 结束', { duration: 5000 });
+  } catch (err) {
+    mediaRecorder = null;
+    showToast('录屏启动失败：' + ((err && err.message) || err));
+  }
+}
+
+function initCapture() {
+  // 默认分组先备好（顺便把分组名告诉主进程）
+  ensureCaptureGroup().catch(() => {});
+
+  // F1 → 截图；F2 → 开关录屏
+  window.electronAPI?.onTakeScreenshot?.(() => { takeScreenshot().catch(() => {}); });
+  window.electronAPI?.onToggleRecording?.(() => { toggleRecording(); });
+
+  // 快捷键被别的程序占用时给个明确提示（不然按了没反应会莫名其妙）
+  window.electronAPI?.onCaptureHotkeyNotice?.((payload) => {
+    if (payload && payload.message) showToast(payload.message, { duration: 10000 });
+  });
+}
+
 // ===== 视频大播放器：预览里的全屏先把画面放大到接近窗口尺寸，再由它去真全屏 =====
 let theater = null;
 
@@ -3669,6 +3834,7 @@ async function init() {
   initEvents();
   restoreMetaPanelState();
   restorePanelFoldState();
+  initCapture();
 
   // 该功能上线前导入的资源还在旧位置：首次启动自动整理一次（只跑一次）
   if (!localStorage.getItem(ORGANIZED_KEY)) {
