@@ -4,22 +4,28 @@ html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: transparent;
+  /* 窗口本身就是矩形，给个实色底：改尺寸时露出的那一线不会那么刺眼，也不会闪白 */
+  background: #1d1d1f;
   font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
   user-select: none;
   cursor: move;
 }
 
-/* 贴图本体：一圈细边框，和框选时的描边一致 */
-body {
+/* 描边画成覆盖层：这样图片仍是严丝合缝的 100%，不会被边框挤小 1px */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
   border: 1px solid rgba(76, 141, 255, 0.9);
-  border-radius: 3px;
+  pointer-events: none;
 }
 
 #shot {
   display: block;
   width: 100%;
   height: 100%;
+  /* Windows 偶尔会把窗口尺寸微调 1px，contain 保证图只做等比缩放、绝不被拉伸 */
+  object-fit: contain;
   -webkit-user-drag: none;
   pointer-events: none; /* 鼠标事件交给 body，免得浏览器自带的图片拖拽捣乱 */
 }

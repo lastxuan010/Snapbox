@@ -678,7 +678,10 @@ function createImagePin(image, region) {
     width: dipW,
     height: dipH,
     frame: false,
-    transparent: true,
+    // 贴图本身就是一块矩形，不需要透明窗。
+    // 透明（分层）窗口在 Windows 上每次改尺寸都要重新合成整窗，滚轮缩放时会一闪一闪的 —— 实测不透明窗就顺了
+    transparent: false,
+    backgroundColor: '#1d1d1f',
     hasShadow: false,
     resizable: false,   // 缩放走滚轮（要按光标位置缩放，交给主进程算）
     movable: false,     // 拖动也自己实现，否则 -webkit-app-region 会把滚轮事件一起吃掉
@@ -688,7 +691,6 @@ function createImagePin(image, region) {
     skipTaskbar: true,
     focusable: false,   // 不抢焦点，不然点一下贴图就打断你在别处的工作
     alwaysOnTop: true,
-    backgroundColor: '#00000000',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -710,26 +712,35 @@ function createImagePin(image, region) {
   win.loadFile(path.join(__dirname, 'pin-image.html'));
   win.once('ready-to-show', () => {
     if (win.isDestroyed()) return;
-    try {
-      const entry = pinWindows.get(key);
-      const outer = win.getBounds();
-      const inner = win.getContentBounds ? win.getContentBounds() : outer;
-      if (entry) {
+
+    // 让"内容区"严格等于选区的 DIP 尺寸：
+    // Windows 会按 DPI 网格微调窗口尺寸（实测要 300 高给了 303），差这点图就会被拉伸
+    const fitContent = () => {
+      try {
+        const inner = win.getContentBounds ? win.getContentBounds() : win.getBounds();
+        const dw = dipW - inner.width;
+        const dh = dipH - inner.height;
+        if (!dw && !dh) return;
+        const cur = win.getBounds();
+        win.setBounds({ x: cur.x, y: cur.y, width: cur.width + dw, height: cur.height + dh });
+      } catch (_) { /* ignore */ }
+    };
+    // 量出来的"外框-内容"固定差值，缩放时要补回去
+    const recordPad = () => {
+      try {
+        const entry = pinWindows.get(key);
+        if (!entry) return;
+        const outer = win.getBounds();
+        const inner = win.getContentBounds ? win.getContentBounds() : outer;
         entry.padX = Math.max(0, outer.width - inner.width);
         entry.padY = Math.max(0, outer.height - inner.height);
-        // 外框比内容大就把差值补上，让贴图始终保持 1:1（内容区正好等于选区的 DIP 尺寸）
-        if (entry.padX || entry.padY) {
-          const inner0 = win.getContentBounds ? win.getContentBounds() : outer;
-          win.setBounds({
-            x: Math.round(inner0.x - entry.padX / 2),
-            y: Math.round(inner0.y - entry.padY / 2),
-            width: dipW + entry.padX,
-            height: dipH + entry.padY
-          });
-        }
-      }
-    } catch (_) { /* ignore */ }
+      } catch (_) { /* ignore */ }
+    };
+
+    fitContent();
     win.showInactive();
+    // setBounds 生效有延迟，稍后再校一次
+    setTimeout(() => { if (!win.isDestroyed()) { fitContent(); recordPad(); } }, 90);
   });
   win.on('closed', () => { pinWindows.delete(key); });
   return win;
