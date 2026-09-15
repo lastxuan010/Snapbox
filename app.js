@@ -1163,6 +1163,32 @@ function createSpeedControl(video, host) {
   box.appendChild(menu);
   sync();
 
+  // 原生控制条在"悬停"和"暂停"两种情况下都会显示，倍速按钮要同步出现，
+  // 否则暂停时原生控制条常显、那个 ⋮ 就露出来了
+  const syncShown = () => box.classList.toggle('is-shown', video.paused);
+  video.addEventListener('pause', syncShown);
+  video.addEventListener('play', syncShown);
+  video.addEventListener('ended', syncShown);
+  syncShown();
+
+  // 播放中鼠标移开后，原生控制条还会停留两三秒才淡出 —— 倍速按钮也停留同样久，
+  // 不然这几秒里那个 ⋮ 会闪出来。
+  // 注意别把"暂停时常显"这个状态丢掉：暂停时原生控制条一直显示，倍速也必须一直在
+  let hideTimer = null;
+  if (host) {
+    host.addEventListener('mouseenter', () => {
+      clearTimeout(hideTimer);
+      syncShown();
+    });
+    host.addEventListener('mouseleave', () => {
+      clearTimeout(hideTimer);
+      if (video.paused) { syncShown(); return; }
+      hideTimer = setTimeout(() => {
+        if (!video.paused) box.classList.remove('is-shown');
+      }, 3200);
+    });
+  }
+
   // 把控件对齐到视频右下角 —— 也就是原生控制条"更多选项"所在的位置
   const place = () => {
     if (!video.isConnected || !box.isConnected) return;

@@ -933,27 +933,39 @@ body {
   object-fit: contain;
 }
 
-/* 视频"倍速"入口：盖在原生控制条"更多选项"的位置（坐标由 JS 对齐视频右下角）
-   必须是不透明底，否则底下的原生 ⋮ 图标会透出来 */
+/* 视频用满整个预览区（画面本身仍是等比居中，两边是黑边）。
+   这样原生控制条才有足够宽度铺成一整行：否则 Chromium 会把它折叠成两行，
+   并在右上角塞一个"更多选项"⋯；铺开后 ⋯ 会落到最右侧，正好被倍速按钮盖住 */
+.preview-stage video {
+  width: 100%;
+  height: 100%;
+}
+
+/* 视频"倍速"入口：正好盖在原生控制条"更多选项"（⋮）的位置上。
+   原生控制条在封闭 shadow DOM 里，CSS 删不掉那个按钮（实测 ::-webkit-media-controls-overflow-button 无效），
+   所以只能用一个完全不透明的按钮把它盖住 —— 底色必须不透明，否则底下的 ⋮ 会透出来 */
 .video-speed {
   position: absolute;
   z-index: 2;
-  padding: 3px;
+  padding: 4px 6px;
   border-radius: 7px;
-  background: rgba(26, 26, 28, 0.78);
+  background: #1a1a1c;
   transform: translate(-100%, -100%);
   opacity: 0;
-  transition: opacity 0.18s ease;
+  transition: opacity 0.15s ease;
 }
 
+/* 跟着原生控制条一起出现：悬停时显示；暂停时原生常显，这里也要常显（否则会露出 ⋮） */
 .preview-stage:hover .video-speed,
 .video-speed:hover,
-.video-speed.is-open {
+.video-speed.is-open,
+.video-speed.is-shown {
   opacity: 1;
 }
 
 .video-speed__btn {
-  height: 32px;
+  /* 做得和原生控制条一样高：那样才能把控制条最右侧那颗 ⋮ 完整盖住 */
+  height: 42px;
   padding: 0 10px;
   border: none;
   border-radius: 5px;
