@@ -44,8 +44,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ===== 截图 / 录屏（F4 截图 / F6 录屏）=====
   // 告诉主进程截图与录屏存到哪个分组
   setCaptureGroup: (name) => ipcRenderer.send('set-capture-group', name),
-  // 截当前屏幕，返回 PNG 字节
-  captureScreen: () => ipcRenderer.invoke('capture-screen'),
+  // 让用户框选一块区域，返回选区（含遮罩窗口尺寸，便于换算物理像素）；取消返回 null
+  pickRegion: () => ipcRenderer.invoke('pick-region'),
+  // 截屏（可按选区裁剪），返回 PNG 字节
+  captureScreen: (region) => ipcRenderer.invoke('capture-screen', region),
+  // 录屏用的桌面源（传统桌面采集 getUserMedia 需要它的 id）
+  getCaptureSource: () => ipcRenderer.invoke('get-capture-source'),
+  // 录屏开始/结束 → 主进程显示或收起「正在录屏」指示灯
+  setRecordingState: (on) => ipcRenderer.send('recording-state', !!on),
   // 截图 / 录屏数据落盘到分组文件夹
   saveCapture: (payload) => ipcRenderer.invoke('save-capture', payload),
   // 截图热键被按下 → 去截图

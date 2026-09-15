@@ -1,0 +1,88 @@
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  cursor: crosshair;
+  user-select: none;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+/* 还没框选时的整屏压暗 */
+#veil {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+#veil[hidden] { display: none; }
+
+/* 选区：靠超大 box-shadow 把"选区之外"压暗，选区内部保持原样 */
+#box {
+  position: fixed;
+  z-index: 1;
+  border: 1px solid #4c8dff;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+  cursor: move;
+}
+#box[hidden] { display: none; }
+
+.handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border: 1.5px solid #4c8dff;
+  border-radius: 2px;
+}
+.handle[data-dir="nw"] { left: -5px; top: -5px; cursor: nwse-resize; }
+.handle[data-dir="ne"] { right: -5px; top: -5px; cursor: nesw-resize; }
+.handle[data-dir="sw"] { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.handle[data-dir="se"] { right: -5px; bottom: -5px; cursor: nwse-resize; }
+
+/* 尺寸提示：报的是最终输出的物理像素 */
+#size {
+  position: fixed;
+  z-index: 3;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+#size[hidden] { display: none; }
+
+#tip {
+  position: fixed;
+  z-index: 2;
+  left: 50%;
+  top: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(29, 29, 31, 0.88);
+  color: #f5f5f7;
+  font-size: 13px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+#tip button {
+  padding: 3px 12px;
+  border: none;
+  border-radius: 999px;
+  background: #4c8dff;
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+#tip button:hover { background: #3a7aeb; }
+
+.tip__keys { color: #a1a1a6; font-size: 12px; }

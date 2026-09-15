@@ -38,6 +38,10 @@ const MIME_MAP = {
   '.m4b': 'audio/mp4'
 };
 
+// 主窗口引用：截图框选遮罩、录屏指示灯都是独立窗口，
+// 不能再靠"取第 0 个窗口"来给界面发消息
+let appWindow = null;
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -53,6 +57,11 @@ function createWindow() {
     },
     backgroundColor: '#f5f5f7',
     show: false
+  });
+
+  appWindow = mainWindow;
+  mainWindow.on('closed', () => {
+    if (appWindow === mainWindow) appWindow = null;
   });
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
@@ -570,11 +579,17 @@ function newCaptureId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-// 截"鼠标所在那块屏幕"的原生分辨率画面，只负责返回 PNG 字节
+// 截"指定屏幕"的原生分辨率画面（可按选区裁剪），只负责返回 PNG 字节
+// region: pickRegion() 的结果（不传或 full=true 就是整屏）
 // （入库与落盘统一由渲染进程走 save-capture，和录屏共用一条路径）
-ipcMain.handle('capture-screen', async () => {
+ipcMain.handle('capture-screen', async (event, region) => {
   try {
-    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    // 框选遮罩刚关掉，等它从屏幕上彻底消失再截，免得把遮罩一起拍进去
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const display = (region && region.displayId
+      && screen.getAllDisplays().find((d) => String(d.id) === String(region.displayId)))
+      || screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
     const scale = display.scaleFactor || 1;
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
@@ -586,7 +601,19 @@ ipcMain.handle('capture-screen', async () => {
     if (!sources.length) return { ok: false, error: '没有找到可截取的屏幕' };
 
     const source = sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
-    const image = source.thumbnail;
+    let image = source.thumbnail;
+
+    // 按选区裁剪：遮罩给的是 CSS 像素，用"实际图像宽度 / 遮罩宽度"换算成像素再裁
+    if (region && !region.full && region.screenWidth > 0 && !image.isEmpty()) {
+      const img = image.getSize();
+      const k = img.width / region.screenWidth;
+      const x = Math.max(0, Math.min(Math.round(region.x * k), Math.max(0, img.width - 1)));
+      const y = Math.max(0, Math.min(Math.round(region.y * k), Math.max(0, img.height - 1)));
+      const width = Math.max(1, Math.min(Math.round(region.width * k), img.width - x));
+      const height = Math.max(1, Math.min(Math.round(region.height * k), img.height - y));
+      image = image.crop({ x, y, width, height });
+    }
+
     const size = image.getSize();
     const buffer = image.toPNG();
 
@@ -602,8 +629,36 @@ ipcMain.handle('capture-screen', async () => {
   }
 });
 
+// 录屏要用的桌面源 id。
+// 说明：这里给的是 Electron 传统桌面采集（renderer 里 getUserMedia + chromeMediaSource:'desktop'）用的源，
+// 因为实测 getDisplayMedia 在当前环境里几乎不出帧（3 秒 0~2 帧），传统方式同样条件能到 20+ fps
+ipcMain.handle('get-capture-source', async () => {
+  try {
+    const display = (captureDisplayId
+      && screen.getAllDisplays().find((d) => String(d.id) === String(captureDisplayId)))
+      || screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 320, height: 180 }
+    });
+    const source = sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
+    if (!source) return { ok: false, error: '没有找到可录制的屏幕' };
+    return {
+      ok: true,
+      id: source.id,
+      name: source.name,
+      displayId: String(display.id),
+      width: display.size.width,
+      height: display.size.height,
+      scaleFactor: display.scaleFactor || 1
+    };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
 function sendToRenderer(channel, payload) {
-  const win = BrowserWindow.getAllWindows()[0];
+  const win = appWindow;
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
@@ -648,6 +703,155 @@ ipcMain.handle('save-capture', (event, payload) => {
   }
 });
 
+// ---------- 区域框选：一块全屏遮罩，让用户拖个矩形出来 ----------
+let regionPicker = null;
+let regionPickerResolve = null;
+let regionPickerDisplayId = '';
+// 最近一次框选所在的屏幕：录屏时优先用它，避免鼠标移开导致录错屏
+let captureDisplayId = '';
+
+function regionPickerActive() {
+  return Boolean(regionPicker && !regionPicker.isDestroyed());
+}
+
+function closeRegionPicker(result) {
+  const win = regionPicker;
+  const resolve = regionPickerResolve;
+  regionPicker = null;
+  regionPickerResolve = null;
+  regionPickerDisplayId = '';
+  if (win && !win.isDestroyed()) win.close();
+  if (resolve) resolve(result || null);
+}
+
+// 打开遮罩让用户框选，resolve 出选区（坐标为遮罩窗口内的 CSS 像素）；取消则 resolve null
+function pickRegion() {
+  return new Promise((resolve) => {
+    if (regionPickerActive()) closeRegionPicker(null);
+
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const win = new BrowserWindow({
+      x: display.bounds.x,
+      y: display.bounds.y,
+      width: display.bounds.width,
+      height: display.bounds.height,
+      frame: false,
+      transparent: true,
+      hasShadow: false,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      backgroundColor: '#00000000',
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        preload: path.join(__dirname, 'overlay-preload.js')
+      }
+    });
+
+    regionPicker = win;
+    regionPickerResolve = resolve;
+    regionPickerDisplayId = String(display.id);
+    captureDisplayId = String(display.id);
+
+    try { win.setAlwaysOnTop(true, 'screen-saver'); } catch (_) { /* ignore */ }
+    win.loadFile(path.join(__dirname, 'region-select.html'));
+    win.once('ready-to-show', () => {
+      if (win.isDestroyed()) return;
+      // 窗口刚创建时会被系统压到"工作区"大小（盖不住任务栏），这里再放开到整块屏幕
+      try { win.setBounds(display.bounds); } catch (_) { /* ignore */ }
+      win.show();
+      win.focus();
+    });
+    // 窗口被意外关掉也按"取消"处理，别让 Promise 永远挂着
+    win.on('closed', () => {
+      if (regionPicker === win) {
+        const pending = regionPickerResolve;
+        regionPicker = null;
+        regionPickerResolve = null;
+        if (pending) pending(null);
+      }
+    });
+  });
+}
+
+ipcMain.handle('pick-region', () => pickRegion());
+
+ipcMain.on('region-result', (event, payload) => {
+  if (!regionPickerActive()) return;
+  closeRegionPicker(payload ? { ...payload, displayId: regionPickerDisplayId } : null);
+});
+
+// ---------- 录屏指示灯：常驻置顶的小药丸，明确告诉你"正在录屏" ----------
+let indicatorWindow = null;
+
+function showRecordingIndicator() {
+  if (indicatorWindow && !indicatorWindow.isDestroyed()) return;
+
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const width = 236;
+  const height = 54;
+  const win = new BrowserWindow({
+    width,
+    height,
+    x: Math.round(display.workArea.x + display.workArea.width - width - 18),
+    y: Math.round(display.workArea.y + display.workArea.height - height - 18),
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    focusable: false, // 不抢焦点，别打断正在录的操作
+    alwaysOnTop: true,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'overlay-preload.js')
+    }
+  });
+
+  indicatorWindow = win;
+  try {
+    // 关键：把这个窗口从任何录屏/截图里排除掉，否则它会出现在录出来的画面里
+    win.setContentProtection(true);
+  } catch (_) { /* 老系统不支持，就只能被录进去了 */ }
+  try { win.setAlwaysOnTop(true, 'screen-saver'); } catch (_) { /* ignore */ }
+  win.loadFile(path.join(__dirname, 'recording-indicator.html'));
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.showInactive();
+  });
+  win.on('closed', () => {
+    if (indicatorWindow === win) indicatorWindow = null;
+  });
+}
+
+function hideRecordingIndicator() {
+  const win = indicatorWindow;
+  indicatorWindow = null;
+  if (win && !win.isDestroyed()) win.close();
+}
+
+ipcMain.on('recording-state', (event, on) => {
+  // 只认主窗口的信号（遮罩/指示灯窗口自己发的消息不作数）
+  const from = BrowserWindow.fromWebContents(event.sender);
+  if (from && appWindow && from.id !== appWindow.id) return;
+  if (on) showRecordingIndicator();
+  else hideRecordingIndicator();
+});
+
+// 指示灯上的「停止」按钮：和再按一次热键等价
+ipcMain.on('indicator-stop', () => {
+  sendToRenderer('capture-toggle-recording');
+});
+
 app.whenReady().then(() => {
   // 录屏不弹选择框，直接用鼠标所在的那块屏幕，并带上系统声音（回环采集）
   try {
@@ -655,7 +859,11 @@ app.whenReady().then(() => {
       desktopCapturer.getSources({ types: ['screen'] })
         .then((list) => {
           const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-          const source = list.find((s) => String(s.display_id) === String(display.id)) || list[0];
+          // 优先用刚框选过的那块屏，避免框选之后鼠标移开、录到另一块屏
+          const wanted = captureDisplayId;
+          const source = (wanted && list.find((s) => String(s.display_id) === String(wanted)))
+            || list.find((s) => String(s.display_id) === String(display.id))
+            || list[0];
           if (!source) return callback({});
 
           const grant = { video: source };
@@ -673,17 +881,24 @@ app.whenReady().then(() => {
   }
 
   // 全局注册，App 不在前台也能用
+  // 框选过程中再按热键 = 取消框选（否则会以为按键没反应）
   const activeHotkeys = {
     screenshot: registerCaptureHotkey(
       CAPTURE_HOTKEYS.screenshot.key,
       CAPTURE_HOTKEYS.screenshot.fallback,
-      () => sendToRenderer('capture-take-screenshot'),
+      () => {
+        if (regionPickerActive()) closeRegionPicker(null);
+        else sendToRenderer('capture-take-screenshot');
+      },
       '截图'
     ),
     record: registerCaptureHotkey(
       CAPTURE_HOTKEYS.record.key,
       CAPTURE_HOTKEYS.record.fallback,
-      () => sendToRenderer('capture-toggle-recording'),
+      () => {
+        if (regionPickerActive()) closeRegionPicker(null);
+        else sendToRenderer('capture-toggle-recording');
+      },
       '录屏'
     )
   };

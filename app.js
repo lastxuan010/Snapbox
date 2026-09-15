@@ -1722,8 +1722,12 @@ async function removeCurrentItem() {
 const CAPTURE_GROUP_NAME = '截图/录屏';
 let mediaRecorder = null;
 let recordedChunks = [];
+let pickingRegion = false;       // 正在框选，此时重复按热键先忽略
+let stopCropPipeline = null;     // 区域裁剪的收尾函数
 // 实际生效的热键由主进程下发（换键时界面提示会自动跟上），先给个默认值兜底
 let captureHotkeys = { screenshot: 'F4', record: 'F6' };
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function prettyHotkey(key) {
   return String(key || '')
@@ -1806,11 +1810,18 @@ async function addCaptureItem(payload) {
   return item;
 }
 
-// 截图热键：截当前屏幕 → 存进「截图/录屏」分组 → 登记成条目
+// 截图热键：先框选区域 → 截该区域 → 存进「截图/录屏」分组 → 登记成条目
 async function takeScreenshot() {
   await ensureCaptureGroup();
 
-  const shot = await window.electronAPI?.captureScreen?.();
+  // 框选：不框直接回车 = 整屏；Esc / 右键 = 取消
+  const region = await window.electronAPI?.pickRegion?.();
+  if (!region) {
+    showToast('已取消截图');
+    return null;
+  }
+
+  const shot = await window.electronAPI?.captureScreen?.(region);
   if (!shot || !shot.ok) {
     showToast('截图失败：' + ((shot && shot.error) || '未知错误'));
     return null;
@@ -1826,11 +1837,119 @@ async function takeScreenshot() {
   return addCaptureItem({ kind: 'image', id, path: saved.path, size: saved.size });
 }
 
-// ---- 录屏：按一下开始，再按一下结束 ----
+// ---- 录屏：按一下开始（先框选区域），再按一下结束 ----
+
+// 采集分辨率 ÷ 遮罩宽度：把"遮罩里的 CSS 坐标"换算成画面像素
+function captureScale(track, region) {
+  try {
+    const s = track.getSettings ? track.getSettings() : {};
+    if (s && s.width && region.screenWidth) return s.width / region.screenWidth;
+  } catch (_) { /* ignore */ }
+  return window.devicePixelRatio || 1;
+}
+
+// 把整屏画面裁到选区：用 MediaStreamTrackProcessor 逐帧取原图 → 画进 canvas → 手动推帧。
+// 之所以不用 requestAnimationFrame / 画布自动采样（captureStream(fps)）：
+// 它们在窗口被遮挡或最小化时会被降频甚至停住，而这里每一帧都由视频流本身驱动，后台也照常出帧
+function cropVideoTrack(sourceTrack, region, k) {
+  if (typeof MediaStreamTrackProcessor !== 'function') return null;
+
+  const sx = Math.max(0, Math.round(region.x * k));
+  const sy = Math.max(0, Math.round(region.y * k));
+  const sw = Math.max(2, Math.round(region.width * k));
+  const sh = Math.max(2, Math.round(region.height * k));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = sw;
+  canvas.height = sh;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  // fps=0 → 不自动采样，只有 requestFrame() 时才产出一帧
+  const outStream = canvas.captureStream(0);
+  const outTrack = outStream.getVideoTracks()[0];
+  if (!outTrack || typeof outTrack.requestFrame !== 'function') return null;
+
+  let processor;
+  try {
+    processor = new MediaStreamTrackProcessor({ track: sourceTrack });
+  } catch (_) {
+    return null;
+  }
+
+  const reader = processor.readable.getReader();
+  let stopped = false;
+  let frameCount = 0; // 临时诊断用
+
+  (async () => {
+    try {
+      for (;;) {
+        const { value: frame, done } = await reader.read();
+        if (done) { if (frame) frame.close(); break; }
+        if (stopped) { if (frame) frame.close(); break; }
+        try {
+          const vw = frame.codedWidth || frame.displayWidth || sw;
+          const vh = frame.codedHeight || frame.displayHeight || sh;
+          const cx = Math.max(0, Math.min(sx, Math.max(0, vw - 2)));
+          const cy = Math.max(0, Math.min(sy, Math.max(0, vh - 2)));
+          const cw = Math.max(2, Math.min(sw, vw - cx));
+          const ch = Math.max(2, Math.min(sh, vh - cy));
+          ctx.drawImage(frame, cx, cy, cw, ch, 0, 0, canvas.width, canvas.height);
+          outTrack.requestFrame();
+          frameCount++;
+          window.__cropFrames = frameCount; // 临时诊断
+        } finally {
+          frame.close();
+        }
+      }
+    } catch (err) {
+      if (!stopped) console.warn('[capture] 区域裁剪中断：' + ((err && err.message) || err));
+    }
+  })();
+
+  return {
+    track: outTrack,
+    stop() {
+      stopped = true;
+      try { reader.cancel(); } catch (_) { /* ignore */ }
+      try { outTrack.stop(); } catch (_) { /* ignore */ }
+    }
+  };
+}
+
+// 打开"屏幕 + 系统声音"的采集流。
+// 首选 Electron 传统桌面采集（getUserMedia + chromeMediaSource:'desktop'）：
+// 实测 getDisplayMedia 在当前环境几乎不出帧（3 秒 0~2 帧，运动画面等于幻灯片），
+// 传统方式同样条件能到 23fps；它的 audio 用 chromeMediaSource:'desktop' 就是系统声音回环
+async function openCaptureStream() {
+  const src = await window.electronAPI?.getCaptureSource?.();
+  if (src && src.ok && src.id) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        audio: { mandatory: { chromeMediaSource: 'desktop' } },
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: src.id,
+            maxFrameRate: 30,
+            minFrameRate: 30
+          }
+        }
+      });
+    } catch (_) { /* 传统方式不可用就落到下面的方案 */ }
+  }
+  // 兜底：getDisplayMedia（声音由主进程的 display-media 处理器以回环方式补上）
+  return navigator.mediaDevices.getDisplayMedia({
+    video: { frameRate: { ideal: 30, max: 30 } },
+    audio: true
+  });
+}
+
 function stopRecording() {
   if (!mediaRecorder) return;
   try { mediaRecorder.stop(); } catch (_) { /* ignore */ }
   mediaRecorder = null;
+  window.electronAPI?.setRecordingState?.(false); // 指示灯立刻收起，别让计时继续跑
   showToast('正在保存录屏…', { duration: 4000 });
 }
 
@@ -1839,15 +1958,48 @@ async function toggleRecording() {
     stopRecording();
     return;
   }
+  if (pickingRegion) return; // 正在框选，重复按热键先忽略
   if (!navigator.mediaDevices?.getDisplayMedia) {
     showToast('当前环境不支持录屏');
     return;
   }
 
+  // 先让用户框选区域（回车不选 = 整屏）
+  pickingRegion = true;
+  let region = null;
   try {
-    // audio: true → 声音由主进程的 display-media 处理器以回环方式补上（录系统声音，不录麦克风）
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    region = await window.electronAPI?.pickRegion?.();
+  } finally {
+    pickingRegion = false;
+  }
+  if (!region) {
+    showToast('已取消录屏');
+    return;
+  }
+
+  let stream = null;
+  try {
+    // 遮罩刚关掉，等它从屏幕上消失，免得第一帧录进遮罩
+    await sleep(260);
+
+    // 屏幕画面 + 系统声音（不录麦克风）
+    stream = await openCaptureStream();
     const hasAudio = stream.getAudioTracks().length > 0;
+    const sourceTrack = stream.getVideoTracks()[0];
+
+    // 按选区裁剪（整屏则不用裁）
+    let videoTrack = sourceTrack;
+    let cropNote = '';
+    stopCropPipeline = null;
+    if (!region.full) {
+      const cropped = cropVideoTrack(sourceTrack, region, captureScale(sourceTrack, region));
+      if (cropped) {
+        videoTrack = cropped.track;
+        stopCropPipeline = cropped.stop;
+      } else {
+        cropNote = '（当前环境不支持区域录制，本次录了整屏）';
+      }
+    }
 
     // 带音频时必须把音频编码器一起写进 mimeType，否则可能只录到画面
     const candidates = hasAudio
@@ -1855,13 +2007,17 @@ async function toggleRecording() {
       : ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
     const mime = candidates.find((t) => MediaRecorder.isTypeSupported(t)) || 'video/webm';
 
-    recordedChunks = [];
-    mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+    const mixed = new MediaStream(hasAudio ? [videoTrack, ...stream.getAudioTracks()] : [videoTrack]);
 
-    mediaRecorder.ondataavailable = (e) => {
+    recordedChunks = [];
+    const recorder = new MediaRecorder(mixed, { mimeType: mime });
+
+    recorder.ondataavailable = (e) => {
       if (e.data && e.data.size) recordedChunks.push(e.data);
     };
-    mediaRecorder.onstop = async () => {
+    recorder.onstop = async () => {
+      window.electronAPI?.setRecordingState?.(false);
+      if (stopCropPipeline) { try { stopCropPipeline(); } catch (_) { /* ignore */ } stopCropPipeline = null; }
       stream.getTracks().forEach((t) => t.stop());
       const chunks = recordedChunks;
       recordedChunks = [];
@@ -1877,10 +2033,21 @@ async function toggleRecording() {
       await addCaptureItem({ kind: 'video', id, path: res.path, size: res.size });
     };
 
-    mediaRecorder.start(1000);
-    showToast(`已开始录屏${hasAudio ? '（含系统声音）' : ''} · 再按 ${captureHotkeys.record} 结束`, { duration: 5000 });
+    mediaRecorder = recorder;
+    recorder.start(1000);
+
+    // 指示灯：常驻置顶，随时能看见"正在录屏 + 计时"，点「停止」也能结束
+    window.electronAPI?.setRecordingState?.(true);
+    showToast(
+      `已开始${region.full ? '录屏' : '区域录屏'}${hasAudio ? '（含系统声音）' : ''}`
+      + ` · 再按 ${captureHotkeys.record} 结束${cropNote}`,
+      { duration: 6000 }
+    );
   } catch (err) {
     mediaRecorder = null;
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    if (stopCropPipeline) { try { stopCropPipeline(); } catch (_) { /* ignore */ } stopCropPipeline = null; }
+    window.electronAPI?.setRecordingState?.(false);
     showToast('录屏启动失败：' + ((err && err.message) || err));
   }
 }

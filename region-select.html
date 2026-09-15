@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>选择区域</title>
+  <link rel="stylesheet" href="region-select.css">
+</head>
+<body>
+  <div id="veil"></div>
+
+  <div id="box" hidden>
+    <span class="handle" data-dir="nw"></span>
+    <span class="handle" data-dir="ne"></span>
+    <span class="handle" data-dir="sw"></span>
+    <span class="handle" data-dir="se"></span>
+  </div>
+
+  <div id="size" hidden></div>
+
+  <div id="tip">
+    <span class="tip__hint">拖动鼠标框选区域</span>
+    <button type="button" id="fullBtn">整屏</button>
+    <span class="tip__keys">Enter 确认 · Esc 取消</span>
+  </div>
+
+  <script src="region-select.js"></script>
+</body>
+</html>
