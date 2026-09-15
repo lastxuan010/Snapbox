@@ -1,9 +1,13 @@
-// 区域框选遮罩：拖动框选 → 可移动/改大小 → Enter 确认、Esc 取消
+// 区域框选遮罩：拖动框选 → 可移动/改大小 → Enter 保存、F3 固定到屏幕、Esc 取消
 // 坐标一律用"遮罩窗口内的 CSS 像素"，主进程拿到遮罩窗口尺寸后再换算成物理像素
 const boxEl = document.getElementById('box');
 const veilEl = document.getElementById('veil');
 const sizeEl = document.getElementById('size');
+const toolsEl = document.getElementById('tools');
 const fullBtn = document.getElementById('fullBtn');
+
+// 截图模式带操作条（复制/保存/固定）；录屏模式只用来框范围
+const MODE = new URLSearchParams(location.search).get('mode') === 'record' ? 'record' : 'shot';
 
 const DPR = window.devicePixelRatio || 1;
 const MIN = 8; // 小于这个尺寸视为"只是点了一下"，不算选中
@@ -32,6 +36,7 @@ function paint() {
     veilEl.hidden = false;
     boxEl.hidden = true;
     sizeEl.hidden = true;
+    toolsEl.hidden = true;
     return;
   }
 
@@ -47,6 +52,18 @@ function paint() {
   const below = rect.y + rect.h + 34 < H();
   sizeEl.style.left = clamp(rect.x, 4, Math.max(4, W() - 130)) + 'px';
   sizeEl.style.top = (below ? rect.y + rect.h + 8 : Math.max(4, rect.y - 26)) + 'px';
+
+  // 操作条贴在选区右下角；放不下就翻到选区上方
+  if (MODE !== 'shot') {
+    toolsEl.hidden = true;
+    return;
+  }
+  toolsEl.hidden = false;
+  const tw = toolsEl.offsetWidth || 260;
+  const th = toolsEl.offsetHeight || 32;
+  const canBelow = rect.y + rect.h + th + 10 < H();
+  toolsEl.style.left = clamp(rect.x + rect.w - tw, 4, Math.max(4, W() - tw - 4)) + 'px';
+  toolsEl.style.top = (canBelow ? rect.y + rect.h + 8 : Math.max(4, rect.y - th - 8)) + 'px';
 }
 
 function pointOf(e) {
@@ -54,9 +71,10 @@ function pointOf(e) {
 }
 
 window.addEventListener('mousedown', (e) => {
-  if (e.button === 2) { cancel(); return; }          // 右键 = 取消
+  if (e.button === 2) { cancel('右键'); return; }    // 右键 = 取消
   if (e.button !== 0) return;
-  if (e.target.closest && e.target.closest('#tip')) return; // 顶栏按钮自己处理
+  // 顶栏和操作条上的按钮自己处理，别当成"开始框选"
+  if (e.target.closest && e.target.closest('#tip, #tools')) return;
 
   const p = pointOf(e);
   const dir = (e.target.dataset && e.target.dataset.dir) || '';
@@ -117,22 +135,38 @@ window.addEventListener('mouseup', () => {
   paint();
 });
 
-// 双击选区内部 = 确认
+// 双击选区内部 = 保存
 window.addEventListener('dblclick', (e) => {
-  if (e.target.closest && e.target.closest('#tip')) return;
-  if (rect) confirm();
+  if (e.target.closest && e.target.closest('#tip, #tools')) return;
+  if (rect) confirm(false, 'save');
 });
 
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { e.preventDefault(); cancel(); return; }
-  if (e.key === 'Enter') { e.preventDefault(); confirm(); return; }
-  if (e.key === ' ') { e.preventDefault(); confirm(true); }  // 空格 = 整屏
+  if (e.key === 'Escape') { e.preventDefault(); cancel('Esc'); return; }
+  if (e.key === 'Enter') { e.preventDefault(); confirm(false, 'save'); return; }
+  if (e.key === ' ') { e.preventDefault(); confirm(true, 'save'); return; }  // 空格 = 整屏
+  if (e.key === 'F3') { e.preventDefault(); confirm(false, 'pin'); return; }  // F3 = 固定到屏幕
+  if (MODE !== 'shot') return;
+  const key = String(e.key || '').toLowerCase();
+  if (key === 'c') { e.preventDefault(); confirm(false, 'copy'); }            // C = 复制
+  else if (key === 'p') { e.preventDefault(); confirm(false, 'pin'); }
 });
 
-fullBtn.addEventListener('click', () => confirm(true));
+fullBtn.addEventListener('click', () => confirm(true, 'save'));
 
-function confirm(full) {
-  const base = { screenWidth: W(), screenHeight: H(), devicePixelRatio: DPR };
+// 操作条按钮
+toolsEl.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  e.stopPropagation();
+  const act = btn.dataset.act;
+  if (act === 'cancel') cancel('点了取消按钮');
+  else confirm(false, act);
+});
+
+// action: 'save' 存进库里 / 'copy' 复制到剪贴板 / 'pin' 固定到屏幕上
+function confirm(full, action) {
+  const base = { screenWidth: W(), screenHeight: H(), devicePixelRatio: DPR, action: action || 'save' };
   if (full || !rect || rect.w < MIN || rect.h < MIN) {
     // 什么都没框（或按了整屏）→ 整屏
     window.captureOverlay.finish({ ...base, full: true });
@@ -148,7 +182,9 @@ function confirm(full) {
   });
 }
 
-function cancel() {
+// 记录取消来源：这个遮罩是全屏的，万一"莫名其妙没了"，日志里能直接看出是谁干的
+function cancel(reason) {
+  console.log('[capture] 取消框选：' + (reason || '未知'));
   window.captureOverlay.cancel();
 }
 

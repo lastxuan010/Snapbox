@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>贴图</title>
+  <link rel="stylesheet" href="pin-image.css">
+</head>
+<body>
+  <img id="shot" alt="" draggable="false">
+
+  <div id="bar" hidden>
+    <button type="button" id="copyBtn" title="复制到剪贴板">复制</button>
+    <button type="button" id="saveBtn" title="保存到「截图/录屏」">保存</button>
+    <button type="button" id="closeBtn" title="关闭（双击图片也可以）">✕</button>
+  </div>
+
+  <div id="hint">拖动移动 · 滚轮缩放 · Ctrl+滚轮透明 · 双击关闭</div>
+
+  <script src="pin-image.js"></script>
+</body>
+</html>

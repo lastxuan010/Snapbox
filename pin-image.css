@@ -1,0 +1,75 @@
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  user-select: none;
+  cursor: move;
+}
+
+/* 贴图本体：一圈细边框，和框选时的描边一致 */
+body {
+  border: 1px solid rgba(76, 141, 255, 0.9);
+  border-radius: 3px;
+}
+
+#shot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  -webkit-user-drag: none;
+  pointer-events: none; /* 鼠标事件交给 body，免得浏览器自带的图片拖拽捣乱 */
+}
+
+/* 悬浮按钮：鼠标移上来才出现 */
+#bar {
+  position: fixed;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+body:hover #bar { opacity: 1; }
+#bar[hidden] { display: none; }
+
+#bar button {
+  padding: 3px 9px;
+  border: none;
+  border-radius: 5px;
+  background: rgba(29, 29, 31, 0.86);
+  color: #f5f5f7;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#bar button:hover { background: rgba(29, 29, 31, 0.98); }
+
+/* 底部提示条：平时 hover 显示操作说明，点按钮后短暂显示结果 */
+#hint {
+  position: fixed;
+  left: 50%;
+  bottom: 5px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 10px);
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(29, 29, 31, 0.82);
+  color: #f5f5f7;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+body:hover #hint { opacity: 1; }
+#hint.is-on { opacity: 1; }

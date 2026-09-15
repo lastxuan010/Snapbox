@@ -45,7 +45,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 告诉主进程截图与录屏存到哪个分组
   setCaptureGroup: (name) => ipcRenderer.send('set-capture-group', name),
   // 让用户框选一块区域，返回选区（含遮罩窗口尺寸，便于换算物理像素）；取消返回 null
-  pickRegion: () => ipcRenderer.invoke('pick-region'),
+  // mode: 'shot' 带操作条（复制/保存/固定），'record' 只框选范围
+  pickRegion: (mode) => ipcRenderer.invoke('pick-region', mode),
+  // 框选后的动作：复制到剪贴板 / 固定到屏幕上
+  regionAction: (action, region) => ipcRenderer.invoke('region-action', { action, region }),
+  // 贴图窗口点了「保存」→ 主进程写好像素后通知界面登记成条目
+  onRegisterCapture: (cb) => ipcRenderer.on('register-capture', (event, payload) => cb(payload)),
   // 截屏（可按选区裁剪），返回 PNG 字节
   captureScreen: (region) => ipcRenderer.invoke('capture-screen', region),
   // 录屏用的桌面源（传统桌面采集 getUserMedia 需要它的 id）

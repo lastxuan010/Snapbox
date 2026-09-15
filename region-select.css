@@ -56,6 +56,43 @@ html, body {
 }
 #size[hidden] { display: none; }
 
+/* 选区旁边的操作条：复制 / 保存 / 固定到屏幕 / 取消 */
+#tools {
+  position: fixed;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  border-radius: 8px;
+  background: rgba(29, 29, 31, 0.93);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.38);
+}
+#tools[hidden] { display: none; }
+
+#tools button {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: #f5f5f7;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#tools button:hover { background: rgba(255, 255, 255, 0.16); }
+#tools button[data-act="pin"] { background: #4c8dff; color: #fff; font-weight: 600; }
+#tools button[data-act="pin"]:hover { background: #3a7aeb; }
+
+.tools__sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
 #tip {
   position: fixed;
   z-index: 2;

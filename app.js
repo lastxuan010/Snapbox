@@ -1810,14 +1810,33 @@ async function addCaptureItem(payload) {
   return item;
 }
 
-// 截图热键：先框选区域 → 截该区域 → 存进「截图/录屏」分组 → 登记成条目
+// 截图热键：先框选区域 → 按操作条的动作走：保存入库 / 复制到剪贴板 / 固定到屏幕
 async function takeScreenshot() {
   await ensureCaptureGroup();
 
   // 框选：不框直接回车 = 整屏；Esc / 右键 = 取消
-  const region = await window.electronAPI?.pickRegion?.();
+  const region = await window.electronAPI?.pickRegion?.('shot');
   if (!region) {
     showToast('已取消截图');
+    return null;
+  }
+
+  // 只复制到剪贴板：不落盘、不入库
+  if (region.action === 'copy') {
+    const res = await window.electronAPI?.regionAction?.('copy', region);
+    showToast(res && res.ok ? '已复制到剪贴板' : ('复制失败：' + ((res && res.error) || '未知错误')));
+    return null;
+  }
+
+  // 固定到屏幕上（贴图）
+  if (region.action === 'pin') {
+    const res = await window.electronAPI?.regionAction?.('pin', region);
+    showToast(
+      res && res.ok
+        ? '已固定到屏幕 · 拖动移动、滚轮缩放、双击关闭'
+        : ('固定失败：' + ((res && res.error) || '未知错误')),
+      { duration: 6000 }
+    );
     return null;
   }
 
@@ -1968,7 +1987,7 @@ async function toggleRecording() {
   pickingRegion = true;
   let region = null;
   try {
-    region = await window.electronAPI?.pickRegion?.();
+    region = await window.electronAPI?.pickRegion?.('record');
   } finally {
     pickingRegion = false;
   }
@@ -2074,6 +2093,11 @@ function initCapture() {
   // 截图 / 开关录屏
   window.electronAPI?.onTakeScreenshot?.(() => { takeScreenshot().catch(() => {}); });
   window.electronAPI?.onToggleRecording?.(() => { toggleRecording(); });
+
+  // 贴图窗口点了「保存」：主进程已经写好文件，这里把它登记成条目
+  window.electronAPI?.onRegisterCapture?.((payload) => {
+    if (payload) addCaptureItem(payload).catch(() => {});
+  });
 
   // 快捷键被别的程序占用时给个明确提示（不然按了没反应会莫名其妙）
   window.electronAPI?.onCaptureHotkeyNotice?.((payload) => {

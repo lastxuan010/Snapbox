@@ -62,6 +62,8 @@ function createWindow() {
   appWindow = mainWindow;
   mainWindow.on('closed', () => {
     if (appWindow === mainWindow) appWindow = null;
+    // 贴图是主界面的附属，主窗口关掉就把它们一起收掉，否则程序会一直留在屏幕上不走
+    closeAllPins();
   });
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
@@ -579,40 +581,47 @@ function newCaptureId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-// 截"指定屏幕"的原生分辨率画面（可按选区裁剪），只负责返回 PNG 字节
+// 截"指定屏幕"的原生分辨率画面（可按选区裁剪），返回 nativeImage；失败返回 null
 // region: pickRegion() 的结果（不传或 full=true 就是整屏）
+async function captureRegionImage(region) {
+  // 框选遮罩刚关掉，等它从屏幕上彻底消失再截，免得把遮罩一起拍进去
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  const display = (region && region.displayId
+    && screen.getAllDisplays().find((d) => String(d.id) === String(region.displayId)))
+    || screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const scale = display.scaleFactor || 1;
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: {
+      width: Math.round(display.size.width * scale),
+      height: Math.round(display.size.height * scale)
+    }
+  });
+  if (!sources.length) return null;
+
+  const source = sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
+  let image = source.thumbnail;
+
+  // 按选区裁剪：遮罩给的是 CSS 像素，用"实际图像宽度 / 遮罩宽度"换算成像素再裁
+  if (region && !region.full && region.screenWidth > 0 && !image.isEmpty()) {
+    const img = image.getSize();
+    const k = img.width / region.screenWidth;
+    const x = Math.max(0, Math.min(Math.round(region.x * k), Math.max(0, img.width - 1)));
+    const y = Math.max(0, Math.min(Math.round(region.y * k), Math.max(0, img.height - 1)));
+    const width = Math.max(1, Math.min(Math.round(region.width * k), img.width - x));
+    const height = Math.max(1, Math.min(Math.round(region.height * k), img.height - y));
+    image = image.crop({ x, y, width, height });
+  }
+  return image;
+}
+
+// 截当前屏幕（可按选区裁剪），返回 PNG 字节
 // （入库与落盘统一由渲染进程走 save-capture，和录屏共用一条路径）
 ipcMain.handle('capture-screen', async (event, region) => {
   try {
-    // 框选遮罩刚关掉，等它从屏幕上彻底消失再截，免得把遮罩一起拍进去
-    await new Promise((resolve) => setTimeout(resolve, 250));
-
-    const display = (region && region.displayId
-      && screen.getAllDisplays().find((d) => String(d.id) === String(region.displayId)))
-      || screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-    const scale = display.scaleFactor || 1;
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: {
-        width: Math.round(display.size.width * scale),
-        height: Math.round(display.size.height * scale)
-      }
-    });
-    if (!sources.length) return { ok: false, error: '没有找到可截取的屏幕' };
-
-    const source = sources.find((s) => String(s.display_id) === String(display.id)) || sources[0];
-    let image = source.thumbnail;
-
-    // 按选区裁剪：遮罩给的是 CSS 像素，用"实际图像宽度 / 遮罩宽度"换算成像素再裁
-    if (region && !region.full && region.screenWidth > 0 && !image.isEmpty()) {
-      const img = image.getSize();
-      const k = img.width / region.screenWidth;
-      const x = Math.max(0, Math.min(Math.round(region.x * k), Math.max(0, img.width - 1)));
-      const y = Math.max(0, Math.min(Math.round(region.y * k), Math.max(0, img.height - 1)));
-      const width = Math.max(1, Math.min(Math.round(region.width * k), img.width - x));
-      const height = Math.max(1, Math.min(Math.round(region.height * k), img.height - y));
-      image = image.crop({ x, y, width, height });
-    }
+    const image = await captureRegionImage(region);
+    if (!image || image.isEmpty()) return { ok: false, error: '没有找到可截取的屏幕' };
 
     const size = image.getSize();
     const buffer = image.toPNG();
@@ -624,6 +633,216 @@ ipcMain.handle('capture-screen', async (event, region) => {
       height: size.height,
       size: buffer.length
     };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
+// ---------- 贴图：把截图钉在屏幕上（像 Snipaste 那样） ----------
+const pinWindows = new Map(); // webContents.id → { win, image, pxW, pxH, dipW0, dipH0 }
+
+function pinEntryOf(event) {
+  return pinWindows.get(event.sender.id) || null;
+}
+
+function closeAllPins() {
+  for (const entry of [...pinWindows.values()]) {
+    if (entry.win && !entry.win.isDestroyed()) entry.win.close();
+  }
+  pinWindows.clear();
+}
+
+function createImagePin(image, region) {
+  const size = image.getSize();
+  if (!size.width || !size.height) return null;
+
+  const display = (region && region.displayId
+    && screen.getAllDisplays().find((d) => String(d.id) === String(region.displayId)))
+    || screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const scale = display.scaleFactor || 1;
+
+  // 屏幕坐标用 DIP：窗口尺寸 = 物理像素 ÷ 缩放比，这样贴出来的图跟你框的一样大
+  const dipW = Math.max(24, Math.round(size.width / scale));
+  const dipH = Math.max(24, Math.round(size.height / scale));
+
+  // 默认就贴在原来框选的位置（所以看起来像"选区留在了屏幕上"）；整屏截图则居中
+  const clampX = (v) => Math.round(Math.max(display.bounds.x, Math.min(v, display.bounds.x + display.size.width - dipW)));
+  const clampY = (v) => Math.round(Math.max(display.bounds.y, Math.min(v, display.bounds.y + display.size.height - dipH)));
+  const hasRect = region && !region.full && typeof region.x === 'number';
+  const x = clampX(display.bounds.x + (hasRect ? region.x : Math.round((display.size.width - dipW) / 2)));
+  const y = clampY(display.bounds.y + (hasRect ? region.y : Math.round((display.size.height - dipH) / 2)));
+
+  const win = new BrowserWindow({
+    x,
+    y,
+    width: dipW,
+    height: dipH,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    resizable: false,   // 缩放走滚轮（要按光标位置缩放，交给主进程算）
+    movable: false,     // 拖动也自己实现，否则 -webkit-app-region 会把滚轮事件一起吃掉
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    focusable: false,   // 不抢焦点，不然点一下贴图就打断你在别处的工作
+    alwaysOnTop: true,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'pin-preload.js')
+    }
+  });
+
+  const key = win.webContents.id;
+  pinWindows.set(key, {
+    win, image, pxW: size.width, pxH: size.height,
+    dipW0: dipW, dipH0: dipH,
+    // 缩放用浮点记住"逻辑尺寸"，只有写进窗口那一刻才取整
+    scaleW: dipW, scaleH: dipH,
+    // 外框与内容区的差值（无边框窗在 Windows 上也可能差 1~3px），缩放时要补回去
+    padX: 0, padY: 0
+  });
+
+  try { win.setAlwaysOnTop(true, 'screen-saver'); } catch (_) { /* ignore */ }
+  win.loadFile(path.join(__dirname, 'pin-image.html'));
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return;
+    try {
+      const entry = pinWindows.get(key);
+      const outer = win.getBounds();
+      const inner = win.getContentBounds ? win.getContentBounds() : outer;
+      if (entry) {
+        entry.padX = Math.max(0, outer.width - inner.width);
+        entry.padY = Math.max(0, outer.height - inner.height);
+        // 外框比内容大就把差值补上，让贴图始终保持 1:1（内容区正好等于选区的 DIP 尺寸）
+        if (entry.padX || entry.padY) {
+          const inner0 = win.getContentBounds ? win.getContentBounds() : outer;
+          win.setBounds({
+            x: Math.round(inner0.x - entry.padX / 2),
+            y: Math.round(inner0.y - entry.padY / 2),
+            width: dipW + entry.padX,
+            height: dipH + entry.padY
+          });
+        }
+      }
+    } catch (_) { /* ignore */ }
+    win.showInactive();
+  });
+  win.on('closed', () => { pinWindows.delete(key); });
+  return win;
+}
+
+// 框选之后的动作：复制到剪贴板 / 固定到屏幕上（保存走渲染端的原有流程）
+ipcMain.handle('region-action', async (event, payload) => {
+  const region = (payload && payload.region) || null;
+  const action = (payload && payload.action) || 'copy';
+  try {
+    const image = await captureRegionImage(region);
+    if (!image || image.isEmpty()) return { ok: false, error: '没有截到画面' };
+
+    if (action === 'copy') {
+      clipboard.writeImage(image);
+      const size = image.getSize();
+      return { ok: true, action, width: size.width, height: size.height };
+    }
+
+    if (action === 'pin') {
+      const win = createImagePin(image, region);
+      return win ? { ok: true, action } : { ok: false, error: '贴图窗口创建失败' };
+    }
+
+    return { ok: false, error: '未知动作：' + action };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
+// 贴图窗口取图（data URL + 原始像素尺寸）
+ipcMain.handle('pin-get-image', (event) => {
+  const entry = pinEntryOf(event);
+  if (!entry) return { ok: false };
+  return { ok: true, dataUrl: entry.image.toDataURL(), width: entry.pxW, height: entry.pxH };
+});
+
+// 拖动移动（增量由渲染端按屏幕坐标算好）
+ipcMain.on('pin-move', (event, delta) => {
+  const entry = pinEntryOf(event);
+  if (!entry || entry.win.isDestroyed()) return;
+  const dx = Math.round((delta && delta.dx) || 0);
+  const dy = Math.round((delta && delta.dy) || 0);
+  if (!dx && !dy) return;
+  const b = entry.win.getBounds();
+  entry.win.setBounds({ x: b.x + dx, y: b.y + dy, width: b.width, height: b.height });
+});
+
+// 滚轮缩放：以光标为锚点，保证光标下的那个点不动（和 Snipaste 一致）
+ipcMain.on('pin-scale', (event, payload) => {
+  const entry = pinEntryOf(event);
+  if (!entry || entry.win.isDestroyed()) return;
+  const factor = Number(payload && payload.factor) || 1;
+  if (factor === 1) return;
+
+  // 逻辑尺寸用浮点累乘：小倍率如果每步都取整会被吃掉，看起来就像"滚了没反应"
+  const minW = 40;
+  const maxW = entry.dipW0 * 4;
+  const nextW = Math.max(minW, Math.min(maxW, entry.scaleW * factor));
+  if (nextW === entry.scaleW) return;
+  entry.scaleW = nextW;
+  entry.scaleH = entry.dipH0 * (nextW / entry.dipW0);
+
+  // 锚点按"内容区"算：页面里量到的尺寸就是内容区
+  const padX = entry.padX || 0;
+  const padY = entry.padY || 0;
+  const contentW = Math.max(24, Math.round(entry.scaleW));
+  const contentH = Math.max(16, Math.round(entry.scaleH));
+  const inner = (entry.win.getContentBounds && entry.win.getContentBounds()) || entry.win.getBounds();
+  const cursor = screen.getCursorScreenPoint();
+  const relX = inner.width ? (cursor.x - inner.x) / inner.width : 0.5;
+  const relY = inner.height ? (cursor.y - inner.y) / inner.height : 0.5;
+
+  entry.win.setBounds({
+    x: Math.round(cursor.x - relX * contentW - padX / 2),
+    y: Math.round(cursor.y - relY * contentH - padY / 2),
+    width: contentW + padX,
+    height: contentH + padY
+  });
+});
+
+// Ctrl+滚轮：调透明度
+ipcMain.on('pin-opacity', (event, value) => {
+  const entry = pinEntryOf(event);
+  if (!entry || entry.win.isDestroyed()) return;
+  const v = Math.max(0.15, Math.min(1, Number(value) || 1));
+  entry.win.setOpacity(v);
+});
+
+ipcMain.on('pin-close', (event) => {
+  const entry = pinEntryOf(event);
+  if (entry && !entry.win.isDestroyed()) entry.win.close();
+});
+
+ipcMain.handle('pin-copy', (event) => {
+  const entry = pinEntryOf(event);
+  if (!entry) return { ok: false, error: '贴图已不存在' };
+  clipboard.writeImage(entry.image);
+  return { ok: true };
+});
+
+// 贴图窗口点「保存」：主进程写进分组文件夹，再让主界面登记成条目
+ipcMain.handle('pin-save', (event) => {
+  const entry = pinEntryOf(event);
+  if (!entry) return { ok: false, error: '贴图已不存在' };
+  try {
+    const id = newCaptureId();
+    const dir = groupDir(captureGroupName, true);
+    const file = path.join(dir, `${id}.png`);
+    const buffer = entry.image.toPNG();
+    fs.writeFileSync(file, buffer);
+    sendToRenderer('register-capture', { kind: 'image', id, path: file, size: buffer.length });
+    return { ok: true, path: file, size: buffer.length };
   } catch (err) {
     return { ok: false, error: String((err && err.message) || err) };
   }
@@ -856,7 +1075,8 @@ function closeRegionPicker(result) {
 }
 
 // 打开遮罩让用户框选，resolve 出选区（坐标为遮罩窗口内的 CSS 像素）；取消则 resolve null
-function pickRegion() {
+// mode: 'shot' 显示操作条（复制/保存/固定），'record' 只用来框选录屏范围
+function pickRegion(mode) {
   return new Promise((resolve) => {
     if (regionPickerActive()) closeRegionPicker(null);
 
@@ -890,7 +1110,9 @@ function pickRegion() {
     captureDisplayId = String(display.id);
 
     try { win.setAlwaysOnTop(true, 'screen-saver'); } catch (_) { /* ignore */ }
-    win.loadFile(path.join(__dirname, 'region-select.html'));
+    win.loadFile(path.join(__dirname, 'region-select.html'), {
+      query: { mode: mode === 'record' ? 'record' : 'shot' }
+    });
     win.once('ready-to-show', () => {
       if (win.isDestroyed()) return;
       // 窗口刚创建时会被系统压到"工作区"大小（盖不住任务栏），这里再放开到整块屏幕
@@ -910,7 +1132,7 @@ function pickRegion() {
   });
 }
 
-ipcMain.handle('pick-region', () => pickRegion());
+ipcMain.handle('pick-region', (event, mode) => pickRegion(mode));
 
 ipcMain.on('region-result', (event, payload) => {
   if (!regionPickerActive()) return;
