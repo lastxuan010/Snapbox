@@ -1088,6 +1088,84 @@ function showMissingPreview(stage, item) {
   `;
 }
 
+// ===== 视频倍速：盖在原生控制条"更多选项"的位置上，悬停/点击选速度 =====
+const VIDEO_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+const VIDEO_RATE_KEY = 'memorie.playbackRate';
+const rateLabel = (r) => (r === 1 || r === 2 ? r.toFixed(1) : String(r)) + '×';
+
+function createSpeedControl(video, host) {
+  const box = document.createElement('div');
+  box.className = 'video-speed';
+
+  // 沿用上次选过的倍速
+  const saved = Number(localStorage.getItem(VIDEO_RATE_KEY));
+  if (saved && VIDEO_SPEEDS.includes(saved)) video.playbackRate = saved;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'video-speed__btn';
+  btn.title = '播放倍速';
+
+  const menu = document.createElement('div');
+  menu.className = 'video-speed__menu';
+  menu.innerHTML = VIDEO_SPEEDS
+    .map((r) => `<button type="button" data-rate="${r}" title="${r === 1 ? '正常速度' : '播放速度 ' + rateLabel(r)}">${rateLabel(r)}</button>`)
+    .join('');
+
+  const sync = () => {
+    const rate = video.playbackRate;
+    btn.textContent = rate === 1 ? '倍速' : rateLabel(rate);
+    menu.querySelectorAll('button[data-rate]').forEach((b) => {
+      b.classList.toggle('is-active', Number(b.dataset.rate) === rate);
+    });
+  };
+
+  menu.addEventListener('click', (e) => {
+    const option = e.target.closest('button[data-rate]');
+    if (!option) return;
+    e.stopPropagation();
+    video.playbackRate = Number(option.dataset.rate);
+    try {
+      localStorage.setItem(VIDEO_RATE_KEY, String(video.playbackRate));
+    } catch (_) { /* 存不下就算了 */ }
+    box.classList.remove('is-open');
+    sync();
+  });
+
+  // 点按钮直接钉住菜单（触控板 / 不想一直悬停时更好点）
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    box.classList.toggle('is-open');
+  });
+
+  box.appendChild(btn);
+  box.appendChild(menu);
+  sync();
+
+  // 把控件对齐到视频右下角 —— 也就是原生控制条"更多选项"所在的位置
+  const place = () => {
+    if (!video.isConnected || !box.isConnected) return;
+    const vr = video.getBoundingClientRect();
+    const hr = host.getBoundingClientRect();
+    box.style.left = Math.round(vr.right - hr.left - 6) + 'px';
+    box.style.top = Math.round(vr.bottom - hr.top - 6) + 'px';
+
+    // 视频上方放不下就把菜单翻到下面
+    const stageTop = hr.top;
+    const need = menu.offsetHeight + 46;
+    box.classList.toggle('is-below', vr.bottom - need < stageTop);
+  };
+
+  place();
+  if (window.ResizeObserver) {
+    // 视频尺寸一变（元数据加载、窗口缩放）就重新对齐
+    const ro = new ResizeObserver(place);
+    ro.observe(video);
+  }
+
+  return box;
+}
+
 async function selectItem(id) {
   state.selectedId = id;
   renderGrid();
@@ -1146,7 +1224,10 @@ async function selectItem(id) {
       // 预览里的"全屏"不直接进系统全屏，而是先打开大播放器（见 openTheater）
       video.dataset.videoFor = item.id;
       video.__theater = () => openTheater(item, video);
+
       stage.appendChild(video);
+      // 原生控制条上的"更多选项"改不了，就在同一位置盖一个"倍速"入口
+      stage.appendChild(createSpeedControl(video, stage));
     } else {
       const img = document.createElement('img');
       img.src = preview.url;
