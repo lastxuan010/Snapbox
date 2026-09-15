@@ -556,12 +556,12 @@ ipcMain.handle('open-zip-folder', () => {
   }
 });
 
-// ---------- 截图 / 录屏（F4 截图 / F5 录屏）----------
+// ---------- 截图 / 录屏（F4 截图 / F6 录屏，录屏含系统声音）----------
 
 // 想换键只改这里：界面上的提示文案会跟着这里走，不会写死
 const CAPTURE_HOTKEYS = {
   screenshot: { key: 'F4', fallback: 'Control+F4' },
-  record: { key: 'F5', fallback: 'Control+F5' }
+  record: { key: 'F6', fallback: 'Control+F6' }
 };
 
 let captureGroupName = '截图/录屏';
@@ -649,14 +649,22 @@ ipcMain.handle('save-capture', (event, payload) => {
 });
 
 app.whenReady().then(() => {
-  // 录屏不弹选择框，直接用鼠标所在的那块屏幕
+  // 录屏不弹选择框，直接用鼠标所在的那块屏幕，并带上系统声音（回环采集）
   try {
     session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
       desktopCapturer.getSources({ types: ['screen'] })
         .then((list) => {
           const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
           const source = list.find((s) => String(s.display_id) === String(display.id)) || list[0];
-          callback(source ? { video: source } : {});
+          if (!source) return callback({});
+
+          const grant = { video: source };
+          // 回环采集：把扬声器正在播放的声音一起录进去（不用麦克风，也不会录到环境噪音）
+          // 只有 Windows 原生支持；其它平台硬塞会直接导致录制失败，所以不塞
+          if (process.platform === 'win32' && !(request && request.audioRequested === false)) {
+            grant.audio = 'loopback';
+          }
+          callback(grant);
         })
         .catch(() => callback({}));
     });

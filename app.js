@@ -1718,12 +1718,12 @@ async function removeCurrentItem() {
   await confirmDeleteFlow([state.selectedId]);
 }
 
-// ===== 截图 / 录屏：F4 截图、F5 开关录屏，都存进默认分组「截图/录屏」=====
+// ===== 截图 / 录屏：F4 截图、F6 开关录屏（含系统声音），都存进默认分组「截图/录屏」=====
 const CAPTURE_GROUP_NAME = '截图/录屏';
 let mediaRecorder = null;
 let recordedChunks = [];
 // 实际生效的热键由主进程下发（换键时界面提示会自动跟上），先给个默认值兜底
-let captureHotkeys = { screenshot: 'F4', record: 'F5' };
+let captureHotkeys = { screenshot: 'F4', record: 'F6' };
 
 function prettyHotkey(key) {
   return String(key || '')
@@ -1845,8 +1845,16 @@ async function toggleRecording() {
   }
 
   try {
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+    // audio: true → 声音由主进程的 display-media 处理器以回环方式补上（录系统声音，不录麦克风）
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    const hasAudio = stream.getAudioTracks().length > 0;
+
+    // 带音频时必须把音频编码器一起写进 mimeType，否则可能只录到画面
+    const candidates = hasAudio
+      ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+      : ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+    const mime = candidates.find((t) => MediaRecorder.isTypeSupported(t)) || 'video/webm';
+
     recordedChunks = [];
     mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
 
@@ -1870,7 +1878,7 @@ async function toggleRecording() {
     };
 
     mediaRecorder.start(1000);
-    showToast(`已开始录屏 · 再按 ${captureHotkeys.record} 结束`, { duration: 5000 });
+    showToast(`已开始录屏${hasAudio ? '（含系统声音）' : ''} · 再按 ${captureHotkeys.record} 结束`, { duration: 5000 });
   } catch (err) {
     mediaRecorder = null;
     showToast('录屏启动失败：' + ((err && err.message) || err));

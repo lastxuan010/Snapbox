@@ -41,7 +41,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   copyRichText: (html, text) => ipcRenderer.invoke('copy-rich-text', { html, text }),
   // 连按两下 J：收起窗口（恢复由主进程的全局快捷键接管）
   hideWindowWithHotkey: () => ipcRenderer.send('window-hide-hotkey'),
-  // ===== 截图 / 录屏（F4 截图 / F5 录屏）=====
+  // ===== 截图 / 录屏（F4 截图 / F6 录屏）=====
   // 告诉主进程截图与录屏存到哪个分组
   setCaptureGroup: (name) => ipcRenderer.send('set-capture-group', name),
   // 截当前屏幕，返回 PNG 字节
