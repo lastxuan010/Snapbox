@@ -663,13 +663,21 @@ function getFilteredItems() {
     .sort((a, b) => b.createdAt - a.createdAt);
 }
 
-// 分组名含「音乐」→ 该分组用播放器视图
+// 音乐分组：由右键菜单「设为音乐分组」标记，不再看分组名
 function isMusicGroup(groupId) {
-  if (!groupId || groupId === 'all') return false;
-  const name = groupId === 'ungrouped'
-    ? getUngroupedName()
-    : ((state.groups.find((g) => g.id === groupId) || {}).name || '');
-  return name.includes('音乐');
+  if (!groupId || groupId === 'all' || groupId === 'ungrouped') return false;
+  const group = state.groups.find((g) => g.id === groupId);
+  return Boolean(group && group.isMusic);
+}
+
+// 老数据迁移：以前靠"分组名含音乐"判断，首次加载时把这类分组补上标记
+// （isMusic 已存在就不再改，所以手动取消过的分组不会被重新标上）
+async function migrateMusicGroups() {
+  for (const group of state.groups) {
+    if (group.isMusic !== undefined) continue;
+    group.isMusic = String(group.name || '').includes('音乐');
+    await saveGroup(group);
+  }
 }
 
 // 播放器列表：只看当前分组里的音频，按文件名排序（顶部搜索框可按歌名过滤）
@@ -705,7 +713,7 @@ function renderFolders() {
     return `
       <div class="folder-item ${isActive ? 'is-active' : ''}" data-id="${group.id}">
         <div class="folder-item__main">
-          <span class="folder-item__icon">${group.icon || '▦'}</span>
+          <span class="folder-item__icon">${group.isMusic ? '♪' : (group.icon || '▦')}</span>
           <input class="folder-item__name" value="${escapeHtml(group.name)}" readonly data-id="${group.id}" title="${isCustom ? '双击或点击 ✎ 重命名' : ''}">
         </div>
         <span class="folder-item__count">${count}</span>
@@ -2180,6 +2188,19 @@ async function handleGroupContextAction(action) {
     await removeGroup(groupId);
     return;
   }
+  if (action === 'toggleMusicGroup') {
+    const group = state.groups.find((g) => g.id === groupId);
+    if (!group) return;
+    group.isMusic = !group.isMusic;
+    await saveGroup(group);
+    renderFolders();
+    renderGrid();
+    renderMetaGroupOptions();
+    showToast(group.isMusic
+      ? `「${group.name}」已设为音乐分组，中栏改用播放器列表`
+      : `「${group.name}」已取消音乐分组`);
+    return;
+  }
   if (action === 'archiveGroup') {
     await archiveGroup(groupId);
     return;
@@ -2207,6 +2228,12 @@ function openGroupContextMenu(e, groupId) {
     rows.push({ label: '重命名分组', action: 'renameGroup' });
   }
   if (groupId !== 'all' && groupId !== 'ungrouped') {
+    const group = state.groups.find((g) => g.id === groupId) || {};
+    rows.push({
+      label: group.isMusic ? '✓ 已设为音乐分组（点击取消）' : '设为音乐分组',
+      action: 'toggleMusicGroup',
+      tip: '音乐分组的中栏会用播放器列表显示'
+    });
     rows.push({ label: '删除分组', action: 'deleteGroup', danger: true });
   }
   rows.push({ separator: true });
@@ -3602,6 +3629,7 @@ function initEvents() {
 async function init() {
   state.items = await loadItems();
   state.groups = await loadGroups();
+  await migrateMusicGroups();
   installVideoFullscreenIntercept();
   initTheaterResize();
   renderFolders();
