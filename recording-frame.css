@@ -1,0 +1,31 @@
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+}
+
+/* 只画一圈边界，内部完全透明。
+   这一圈画在录制区域【外侧】（窗口比区域大 4px），所以即使被系统录进去也不会污染画面 */
+.frame {
+  position: fixed;
+  inset: 0;
+  border: 2px solid rgba(255, 59, 48, 0.95);
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4); /* 亮背景上也看得清 */
+}
+
+/* 四个角加粗一点，像个取景框 */
+.corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 3px solid #ff3b30;
+}
+.corner--tl { left: -2px; top: -2px; border-right: none; border-bottom: none; }
+.corner--tr { right: -2px; top: -2px; border-left: none; border-bottom: none; }
+.corner--bl { left: -2px; bottom: -2px; border-right: none; border-top: none; }
+.corner--br { right: -2px; bottom: -2px; border-left: none; border-top: none; }

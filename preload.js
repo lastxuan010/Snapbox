@@ -55,8 +55,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   captureScreen: (region) => ipcRenderer.invoke('capture-screen', region),
   // 录屏用的桌面源（传统桌面采集 getUserMedia 需要它的 id）
   getCaptureSource: () => ipcRenderer.invoke('get-capture-source'),
-  // 录屏开始/结束 → 主进程显示或收起「正在录屏」指示灯
-  setRecordingState: (on) => ipcRenderer.send('recording-state', !!on),
+  // 录屏开始/结束 → 主进程显示或收起「正在录屏」指示灯 + 录制范围标线
+  setRecordingState: (on, region) => ipcRenderer.send('recording-state', !!on, region || null),
   // 截图 / 录屏数据落盘到分组文件夹
   saveCapture: (payload) => ipcRenderer.invoke('save-capture', payload),
   // 截图热键被按下 → 去截图

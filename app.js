@@ -2089,8 +2089,8 @@ async function toggleRecording() {
     const startedAt = Date.now();
     recorder.start(1000);
 
-    // 指示灯：常驻置顶，随时能看见"正在录屏 + 计时"，点「停止」也能结束
-    window.electronAPI?.setRecordingState?.(true);
+    // 指示灯（常驻置顶：正在录屏 + 计时 + 停止按钮）+ 录制范围标线（把框的那块用红框标出来）
+    window.electronAPI?.setRecordingState?.(true, region);
     showToast(
       `已开始${region.full ? '录屏' : '区域录屏'}${hasAudio ? '（含系统声音）' : ''}`
       + ` · 再按 ${captureHotkeys.record} 结束${cropNote}`,

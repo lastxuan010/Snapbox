@@ -64,6 +64,8 @@ function createWindow() {
     if (appWindow === mainWindow) appWindow = null;
     // 贴图是主界面的附属，主窗口关掉就把它们一起收掉，否则程序会一直留在屏幕上不走
     closeAllPins();
+    hideRecordingIndicator();
+    hideRecordingFrame();
   });
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
@@ -1203,12 +1205,79 @@ function hideRecordingIndicator() {
   if (win && !win.isDestroyed()) win.close();
 }
 
-ipcMain.on('recording-state', (event, on) => {
+// ---------- 录制范围标线：把用户框的那块用一圈红线标出来 ----------
+let recordingFrame = null;
+
+function showRecordingFrame(region) {
+  // 整屏录制就不用画了（没有"范围"可言）
+  if (!region || region.full || !region.width || !region.height) return null;
+  if (recordingFrame && !recordingFrame.isDestroyed()) return recordingFrame;
+
+  const display = (region.displayId
+    && screen.getAllDisplays().find((d) => String(d.id) === String(region.displayId)))
+    || screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+
+  // 框选给的就是 DIP 坐标；窗口再向外扩 PAD，让这圈线完全落在录制范围之外
+  const PAD = 4;
+  const x = Math.round(display.bounds.x + region.x) - PAD;
+  const y = Math.round(display.bounds.y + region.y) - PAD;
+  const width = Math.round(region.width) + PAD * 2;
+  const height = Math.round(region.height) + PAD * 2;
+
+  const win = new BrowserWindow({
+    x,
+    y,
+    width,
+    height,
+    frame: false,
+    transparent: true,   // 只有这圈线可见，中间要透出被录的内容
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    focusable: false,
+    alwaysOnTop: true,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'overlay-preload.js')
+    }
+  });
+
+  recordingFrame = win;
+  try { win.setContentProtection(true); } catch (_) { /* ignore */ }
+  try { win.setAlwaysOnTop(true, 'screen-saver'); } catch (_) { /* ignore */ }
+  // 关键：整窗鼠标穿透，不然会挡住被录的内容，用户点不动里面
+  try { win.setIgnoreMouseEvents(true); } catch (_) { /* ignore */ }
+  win.loadFile(path.join(__dirname, 'recording-frame.html'));
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.showInactive();
+  });
+  win.on('closed', () => { if (recordingFrame === win) recordingFrame = null; });
+  return win;
+}
+
+function hideRecordingFrame() {
+  const win = recordingFrame;
+  recordingFrame = null;
+  if (win && !win.isDestroyed()) win.close();
+}
+
+ipcMain.on('recording-state', (event, on, region) => {
   // 只认主窗口的信号（遮罩/指示灯窗口自己发的消息不作数）
   const from = BrowserWindow.fromWebContents(event.sender);
   if (from && appWindow && from.id !== appWindow.id) return;
-  if (on) showRecordingIndicator();
-  else hideRecordingIndicator();
+  if (on) {
+    showRecordingIndicator();
+    showRecordingFrame(region);
+  } else {
+    hideRecordingIndicator();
+    hideRecordingFrame();
+  }
 });
 
 // 指示灯上的「停止」按钮：和再按一次热键等价
