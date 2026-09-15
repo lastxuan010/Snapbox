@@ -41,17 +41,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   copyRichText: (html, text) => ipcRenderer.invoke('copy-rich-text', { html, text }),
   // 连按两下 J：收起窗口（恢复由主进程的全局快捷键接管）
   hideWindowWithHotkey: () => ipcRenderer.send('window-hide-hotkey'),
-  // ===== 截图 / 录屏（F1 / F2）=====
+  // ===== 截图 / 录屏（F4 截图 / F5 录屏）=====
   // 告诉主进程截图与录屏存到哪个分组
   setCaptureGroup: (name) => ipcRenderer.send('set-capture-group', name),
   // 截当前屏幕，返回 PNG 字节
   captureScreen: () => ipcRenderer.invoke('capture-screen'),
   // 截图 / 录屏数据落盘到分组文件夹
   saveCapture: (payload) => ipcRenderer.invoke('save-capture', payload),
-  // F1 被按下 → 去截图
+  // 截图热键被按下 → 去截图
   onTakeScreenshot: (cb) => ipcRenderer.on('capture-take-screenshot', () => cb()),
-  // F2 被按下（开始/结束录屏）
+  // 录屏热键被按下（开始/结束录屏）
   onToggleRecording: (cb) => ipcRenderer.on('capture-toggle-recording', () => cb()),
+  // 主进程实际生效的热键（用于界面提示文案）
+  onCaptureHotkeys: (cb) => ipcRenderer.on('capture-hotkeys', (event, payload) => cb(payload)),
   // 快捷键被占用 / 降级的提示
   onCaptureHotkeyNotice: (cb) => ipcRenderer.on('capture-hotkey-notice', (event, payload) => cb(payload)),
   // 把一批条目打包成 zip（存到 library/zip/），返回压缩包路径

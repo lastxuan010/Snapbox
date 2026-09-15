@@ -1718,10 +1718,18 @@ async function removeCurrentItem() {
   await confirmDeleteFlow([state.selectedId]);
 }
 
-// ===== 截图 / 录屏：F1 截图、F2 开关录屏，都存进默认分组「截图/录屏」=====
+// ===== 截图 / 录屏：F4 截图、F5 开关录屏，都存进默认分组「截图/录屏」=====
 const CAPTURE_GROUP_NAME = '截图/录屏';
 let mediaRecorder = null;
 let recordedChunks = [];
+// 实际生效的热键由主进程下发（换键时界面提示会自动跟上），先给个默认值兜底
+let captureHotkeys = { screenshot: 'F4', record: 'F5' };
+
+function prettyHotkey(key) {
+  return String(key || '')
+    .replace(/CommandOrControl|Control|Cmd|Command/g, 'Ctrl')
+    .replace(/\+/g, '+');
+}
 
 // 默认分组不存在就建一个（同时建好磁盘上的同名文件夹）
 async function ensureCaptureGroup() {
@@ -1798,7 +1806,7 @@ async function addCaptureItem(payload) {
   return item;
 }
 
-// F1：截当前屏幕 → 存进「截图/录屏」分组 → 登记成条目
+// 截图热键：截当前屏幕 → 存进「截图/录屏」分组 → 登记成条目
 async function takeScreenshot() {
   await ensureCaptureGroup();
 
@@ -1818,7 +1826,7 @@ async function takeScreenshot() {
   return addCaptureItem({ kind: 'image', id, path: saved.path, size: saved.size });
 }
 
-// ---- 录屏：F2 开始，再按 F2 结束 ----
+// ---- 录屏：按一下开始，再按一下结束 ----
 function stopRecording() {
   if (!mediaRecorder) return;
   try { mediaRecorder.stop(); } catch (_) { /* ignore */ }
@@ -1862,7 +1870,7 @@ async function toggleRecording() {
     };
 
     mediaRecorder.start(1000);
-    showToast('已开始录屏 · 再按 F2 结束', { duration: 5000 });
+    showToast(`已开始录屏 · 再按 ${captureHotkeys.record} 结束`, { duration: 5000 });
   } catch (err) {
     mediaRecorder = null;
     showToast('录屏启动失败：' + ((err && err.message) || err));
@@ -1873,7 +1881,14 @@ function initCapture() {
   // 默认分组先备好（顺便把分组名告诉主进程）
   ensureCaptureGroup().catch(() => {});
 
-  // F1 → 截图；F2 → 开关录屏
+  // 主进程下发的实际生效热键（降级过就用降级后的键）
+  window.electronAPI?.onCaptureHotkeys?.((keys) => {
+    if (!keys) return;
+    if (keys.screenshot) captureHotkeys.screenshot = prettyHotkey(keys.screenshot);
+    if (keys.record) captureHotkeys.record = prettyHotkey(keys.record);
+  });
+
+  // 截图 / 开关录屏
   window.electronAPI?.onTakeScreenshot?.(() => { takeScreenshot().catch(() => {}); });
   window.electronAPI?.onToggleRecording?.(() => { toggleRecording(); });
 

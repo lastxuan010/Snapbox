@@ -556,7 +556,13 @@ ipcMain.handle('open-zip-folder', () => {
   }
 });
 
-// ---------- 截图 / 录屏（F1 / F2）----------
+// ---------- 截图 / 录屏（F4 截图 / F5 录屏）----------
+
+// 想换键只改这里：界面上的提示文案会跟着这里走，不会写死
+const CAPTURE_HOTKEYS = {
+  screenshot: { key: 'F4', fallback: 'Control+F4' },
+  record: { key: 'F5', fallback: 'Control+F5' }
+};
 
 let captureGroupName = '截图/录屏';
 
@@ -658,9 +664,23 @@ app.whenReady().then(() => {
     console.warn('[capture] 录屏源处理器设置失败：' + err);
   }
 
-  // F1 截图 / F2 开关录屏：全局注册，App 不在前台也能用
-  registerCaptureHotkey('F1', 'Control+F1', () => sendToRenderer('capture-take-screenshot'), '截图');
-  registerCaptureHotkey('F2', 'Control+F2', () => sendToRenderer('capture-toggle-recording'), '录屏');
+  // 全局注册，App 不在前台也能用
+  const activeHotkeys = {
+    screenshot: registerCaptureHotkey(
+      CAPTURE_HOTKEYS.screenshot.key,
+      CAPTURE_HOTKEYS.screenshot.fallback,
+      () => sendToRenderer('capture-take-screenshot'),
+      '截图'
+    ),
+    record: registerCaptureHotkey(
+      CAPTURE_HOTKEYS.record.key,
+      CAPTURE_HOTKEYS.record.fallback,
+      () => sendToRenderer('capture-toggle-recording'),
+      '录屏'
+    )
+  };
+  // 把最终生效的键告诉界面，提示文案才不会和实际按键脱节
+  setTimeout(() => sendToRenderer('capture-hotkeys', activeHotkeys), 1500);
 });
 
 app.on('window-all-closed', () => {
