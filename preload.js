@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkFileExists: (filePath) => ipcRenderer.invoke('check-file-exists', filePath),
   // 复制图片（data URL）到系统剪贴板
   copyImage: (dataUrl) => ipcRenderer.invoke('copy-image', dataUrl),
+  // 读剪贴板里的图片 / 复制的文件（opts.peek 只探测不落盘；图片会先落成临时 png）
+  pasteClipboard: (opts) => ipcRenderer.invoke('paste-clipboard', opts),
   // 在资源管理器中显示文件
   showInExplorer: (filePath) => ipcRenderer.invoke('show-in-explorer', filePath),
   // 把文件移入回收站

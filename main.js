@@ -227,6 +227,91 @@ ipcMain.handle('copy-image', (event, dataUrl) => {
   }
 });
 
+// ---------- 粘贴：把剪贴板里的东西导入当前分组 ----------
+// 剪贴板里可能是「图片位图」（截图、网页里复制的图）或「资源管理器里复制的文件」。
+// 优先取文件：复制的是图片文件时，保留原文件名和原始质量更合适。
+
+// Windows 复制文件时格式是 FileNameW（UTF-16LE，多个路径用 \0 分隔）
+function readClipboardFilePaths() {
+  try {
+    const formats = clipboard.availableFormats() || [];
+    if (!formats.some((f) => /FileNameW|FileName|CF_HDROP/i.test(String(f)))) return [];
+    const buf = clipboard.read('FileNameW');
+    const raw = (buf && buf.length) ? buf : clipboard.read('FileName');
+    if (!raw || !raw.length) return [];
+    const text = Buffer.from(raw).toString('utf16le');
+    return text
+      .split('\u0000')
+      .map((s) => s.replace(/\u0000/g, '').trim())
+      .filter(Boolean)
+      .map((p) => {
+        try {
+          const stat = fs.statSync(p);
+          return stat.isFile() ? { path: p, name: path.basename(p), size: stat.size } : null;
+        } catch (_) {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  } catch (_) {
+    return [];
+  }
+}
+
+// 粘贴用的临时目录：剪贴板里的位图没有"原文件"可搬，先落成临时 png 再走正常入库流程
+function pasteTempDir(create = false) {
+  const dir = path.join(app.getPath('temp'), 'snapbox-paste');
+  if (create && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+// 顺手清掉过期的粘贴临时文件（入库时是"移动"，正常不会留；异常中断才可能有残留）
+function prunePasteTemp(olderThanMs) {
+  try {
+    const dir = pasteTempDir(false);
+    if (!fs.existsSync(dir)) return;
+    const now = Date.now();
+    for (const name of fs.readdirSync(dir)) {
+      const file = path.join(dir, name);
+      try {
+        if (now - fs.statSync(file).mtimeMs > olderThanMs) fs.unlinkSync(file);
+      } catch (_) { /* ignore */ }
+    }
+  } catch (_) { /* ignore */ }
+}
+
+function pastedImageName() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `粘贴的图片-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
+    + `-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.png`;
+}
+
+// peek = true 时只探测"剪贴板里有什么"（右键菜单要知道该不该置灰），不落临时文件
+ipcMain.handle('paste-clipboard', (event, opts) => {
+  try {
+    const peek = Boolean(opts && opts.peek);
+
+    const files = readClipboardFilePaths();
+    if (files.length) return { ok: true, kind: 'files', files };
+
+    const image = clipboard.readImage();
+    if (!image || image.isEmpty()) return { ok: true, kind: 'none' };
+
+    const size = image.getSize();
+    const name = pastedImageName();
+    if (peek) return { ok: true, kind: 'image', name, width: size.width, height: size.height };
+
+    prunePasteTemp(6 * 60 * 60 * 1000);
+    const buffer = image.toPNG();
+    const file = path.join(pasteTempDir(true), `pasted-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.png`);
+    fs.writeFileSync(file, buffer);
+    return { ok: true, kind: 'image', name, path: file, size: buffer.length, width: size.width, height: size.height };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
 // 在资源管理器中显示文件
 ipcMain.handle('show-in-explorer', (event, filePath) => {
   try {

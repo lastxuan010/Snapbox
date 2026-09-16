@@ -177,7 +177,12 @@ function formatFileSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function readFileAsDataURL(file) {
+async function readFileAsDataURL(file) {
+  // 粘贴进来的"文件"只是普通对象（没有真 File 句柄可读），走主进程按路径读
+  if (file && file.__sourcePath) {
+    const res = await window.electronAPI?.readFileDataUrl?.(file.__sourcePath);
+    return (res && res.ok) ? res.dataUrl : '';
+  }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
@@ -798,21 +803,25 @@ async function addFiles(files) {
     ? state.selectedGroupId
     : null;
 
-  const mode = getImportMode();
   let added = 0;
   let placed = 0;
   let placeFailed = 0;
   const createdItems = [];
   const undoSteps = [];
+  const usedModes = new Set();   // 一次导入可能混着"移动"和"复制"（粘贴的图片走移动，复制的文件走复制）
 
   for (const file of files) {
     // 图片 / 视频 / 音频 / 其他文件：认不出类型的（pdf、zip、txt…）统一归「其他文件」
     const mediaType = kindOfFile(file);
+    // 粘贴进来的"文件"是普通对象（只有 name/size/__sourcePath），指定好来源与导入方式后
+    // 就能走完整个导入流程：剪贴板图片 = 移动临时文件；复制的文件 = 复制一份（不动原文件）
+    const mode = file.__forceMode || getImportMode();
+    usedModes.add(mode);
 
     const id = generateId();
-    const sourcePath = window.electronAPI?.getPathForFile
+    const sourcePath = file.__sourcePath || (window.electronAPI?.getPathForFile
       ? window.electronAPI.getPathForFile(file)
-      : '';
+      : '');
 
     // 缩略图 / 时长必须在移动文件本体之前生成（之后原路径就不存在了）
     // 「其他文件」不做缩略图、也不整个读进内存（可能是几百 MB 的压缩包），封面只显示扩展名
@@ -876,9 +885,9 @@ async function addFiles(files) {
 
   const parts = [`已导入 ${added} 个项目`];
   if (placed) {
-    parts.push(mode === 'copy'
-      ? `${placed} 个文件已复制到资源文件夹`
-      : `${placed} 个文件已移入资源文件夹`);
+    parts.push(usedModes.has('move')
+      ? `${placed} 个文件已移入资源文件夹`
+      : `${placed} 个文件已复制到资源文件夹`);
   }
   if (placeFailed) parts.push(`${placeFailed} 个未能入库（改为引用原路径）`);
 
@@ -896,12 +905,60 @@ async function addFiles(files) {
       showToast('提示：鼠标移到卡片上会出现 ⋯ 按钮（右键也可以），复制 / 查看文件位置 / 删除都在里面', { duration: 8000 });
     }, 8200);
   }
+
+  return createdItems;
+}
+
+// 剪贴板里的图片 / 复制的文件 → 当前分组
+// 位图没有"原文件"可搬：主进程先落成临时 png，这里按"移动"入库（临时文件顺带被消费掉）
+async function importFromClipboard() {
+  const res = await window.electronAPI?.pasteClipboard?.();
+  if (!res || !res.ok) {
+    showToast('读取剪贴板失败：' + ((res && res.error) || '未知错误'));
+    return;
+  }
+  if (res.kind === 'none') {
+    showToast('剪贴板里没有图片或文件');
+    return;
+  }
+
+  const sources = [];
+  if (res.kind === 'image') {
+    sources.push({
+      name: res.name,
+      type: 'image/png',
+      size: res.size || 0,
+      __sourcePath: res.path,
+      __forceMode: 'move'
+    });
+  } else {
+    for (const f of res.files || []) {
+      // 复制来的文件一律"复制"一份，绝不因为粘贴就把原文件搬走
+      sources.push({ name: f.name, type: '', size: f.size || 0, __sourcePath: f.path, __forceMode: 'copy' });
+    }
+  }
+  if (!sources.length) {
+    showToast('剪贴板里没有图片或文件');
+    return;
+  }
+
+  const created = await addFiles(sources);
+  if (!created || !created.length) return;
+
+  // 粘进来的东西如果被当前筛选挡住，就切回「全部」，否则会以为没粘上
+  const types = created.map((i) => i.type);
+  if (state.filter !== 'all' && !types.includes(state.filter)) applyFilter('all');
+  selectItem(created[created.length - 1].id);
+}
+
+// 切换文件类型筛选（chip 高亮 + 列表刷新）
+function applyFilter(kind) {
+  state.filter = kind;
+  $$('.filter-chip').forEach((c) => c.classList.toggle('is-active', c.dataset.filter === kind));
+  renderGrid();
 }
 
 async function createNote() {
-  const targetGroupId = state.selectedGroupId !== 'all' && state.selectedGroupId !== 'ungrouped'
-    ? state.selectedGroupId
-    : null;
 
   const id = generateId();
   const now = Date.now();
@@ -924,12 +981,9 @@ async function createNote() {
   await saveItem(item);
   state.items.push(item);
 
-  state.filter = 'note';
-  $$('.filter-chip').forEach((c) => c.classList.remove('is-active'));
-  $(`.filter-chip[data-filter="note"]`).classList.add('is-active');
+  applyFilter('note');
 
   renderFolders();
-  renderGrid();
   selectItem(id);
   showToast('笔记已创建');
 }
@@ -1226,12 +1280,14 @@ function renderGrid() {
   const items = getFilteredItems();
 
   if (items.length === 0) {
-    // 「其他文件」空的时候直接把"哪些文件会归到这里"讲清楚，别让人猜
+    // 「其他文件」空的时候直接把"哪些文件会归到这里"讲清楚，别让人猜；
+    // 每句都带上"空白处右键可以粘贴"，否则这个入口没人会发现
+    const pasteHint = '在空白处右键可以粘贴剪贴板里的图片或文件';
     const hint = state.selectedGroupId !== 'all'
-      ? '该分组为空'
+      ? '该分组为空 · ' + pasteHint
       : state.filter === 'other'
-        ? 'PDF、压缩包、文档等非图片 / 视频 / 音频的文件都会归到这里，点上方「添加媒体」导入'
-        : '点击上方按钮导入图片、视频、音频、其他文件，或新建笔记';
+        ? 'PDF、压缩包、文档等非图片 / 视频 / 音频的文件都会归到这里，点上方「添加媒体」导入，也可以' + pasteHint
+        : '点击上方按钮导入图片、视频、音频、其他文件，或新建笔记 · ' + pasteHint;
     grid.innerHTML = `
       <div class="empty-state">
         <div class="empty-state__icon">◫</div>
@@ -3281,6 +3337,45 @@ async function handleAppContextAction(action) {
   }
 }
 
+// ===== 列表空白处右键：粘贴 / 导入文件 / 新建笔记 / 全选 =====
+async function openListBlankMenu(e) {
+  contextMenuTargetIds = [];
+
+  // 先探一下剪贴板里有没有能粘的东西（只探测，不落临时文件）
+  let probe = { ok: true, kind: 'none' };
+  try {
+    probe = (await window.electronAPI?.pasteClipboard?.({ peek: true })) || probe;
+  } catch (_) { /* 读不到就当没有 */ }
+
+  const has = Boolean(probe.ok) && probe.kind !== 'none';
+  const isImage = probe.kind === 'image';
+  const label = isImage ? '粘贴图片' : (probe.kind === 'files' ? '粘贴文件' : '粘贴');
+
+  renderContextMenu(e, [
+    {
+      label,
+      action: 'paste',
+      disabled: !has,
+      tip: has
+        ? `把剪贴板里的${isImage ? '图片' : '文件'}导入到当前分组（Ctrl+V 也可以）`
+        : '剪贴板里没有图片或文件'
+    },
+    { separator: true },
+    { label: '导入文件…', action: 'importFiles', tip: '打开文件选择器，可多选' },
+    { label: '新建笔记', action: 'newNote' },
+    { separator: true },
+    { label: '全选', action: 'selectAll', disabled: currentListItems().length === 0 }
+  ], { type: 'listBlank' });
+}
+
+async function handleListBlankAction(action) {
+  closeContextMenu();
+  if (action === 'paste') { await importFromClipboard(); return; }
+  if (action === 'importFiles') { $('#fileInput')?.click(); return; }
+  if (action === 'newNote') { await createNote(); return; }
+  if (action === 'selectAll') selectAllInList();
+}
+
 function openAppContextMenu(e) {
   const mode = getImportMode();
   const listCount = currentListItems().length;
@@ -4288,10 +4383,37 @@ function initEvents() {
     const type = contextMenuContext ? contextMenuContext.type : 'items';
     if (type === 'group') handleGroupContextAction(action);
     else if (type === 'app') handleAppContextAction(action);
+    else if (type === 'listBlank') handleListBlankAction(action);
     else handleContextAction(action);
   });
   // 菜单键盘导航
   document.addEventListener('keydown', onContextMenuKeydown);
+
+  // 列表空白处右键：粘贴剪贴板 / 导入文件 / 新建笔记
+  const leftPanel = $('.panel--left');
+  if (leftPanel) {
+    leftPanel.addEventListener('contextmenu', (e) => {
+      // 卡片、歌曲行、按钮、输入框保持各自的行为（卡片有自己的右键菜单）；
+      // 空状态、网格空白处、状态栏都算"空白处"，在这里也能粘贴
+      if (e.target && e.target.closest
+        && e.target.closest('.thumb-card, .music-row, button, input, textarea, label')) {
+        return;
+      }
+      e.preventDefault();
+      openListBlankMenu(e);
+    });
+  }
+
+  // Ctrl+V：把剪贴板里的图片 / 复制的文件粘进当前分组
+  document.addEventListener('paste', (e) => {
+    const settings = $('#settingsOverlay');
+    if (settings && !settings.hidden) return;
+    if (isTypingTarget(e.target)) return;   // 输入框、笔记编辑器里的粘贴交给系统
+    const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
+    if (!items.some((it) => it.kind === 'file')) return;  // 纯文本粘贴不拦
+    e.preventDefault();
+    importFromClipboard();
+  });
 
   // 工具栏「⋯」：导入方式 / 打开资源文件夹
   $('#moreMenuBtn').addEventListener('click', (e) => {
