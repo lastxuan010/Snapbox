@@ -1146,9 +1146,43 @@ body {
   transform: translate(-50%, -50%) scale(0.94);
 }
 
-/* 收起态：隐藏表单，只留标题行，把空间让给预览区 */
+/* 收起态：隐藏表单，只留一条细把手（和左侧栏收起成 44px 是一套语言）。
+   原来 18px 内边距 + 34px 大标题行 = 71px，在底部显得又厚又空 */
 .meta-panel.is-collapsed .meta-form {
   display: none;
+}
+
+.meta-panel.is-collapsed {
+  padding: 6px 12px;
+  gap: 0;
+}
+
+.meta-panel.is-collapsed .meta-header {
+  min-height: 30px;
+}
+
+/* 收起后标题降级成小字说明：大标题在细条里既占地方又容易被截断 */
+.meta-panel.is-collapsed .meta-header__title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground-secondary);
+}
+
+.meta-panel.is-collapsed .meta-collapse-btn {
+  width: 26px;
+  height: 26px;
+  font-size: 13px;
+}
+
+.meta-panel.is-collapsed .meta-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.meta-panel.is-collapsed .meta-header__actions .btn {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .panel--right .meta-panel.is-collapsed {
