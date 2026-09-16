@@ -207,6 +207,12 @@ function getVideoThumbnail(videoURL) {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      // 抽完帧立刻放开解码器，否则这个临时 video 会一直占着解码缓冲
+      try {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+      } catch (_) { /* ignore */ }
       resolve(value);
     };
     // 万一解码卡住（损坏的视频 / 不支持的编码），别把导入流程挂死
@@ -244,6 +250,11 @@ function getAudioDuration(dataURL) {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      // 拿到时长就放开音频元素，别让元数据缓冲一直挂着
+      try {
+        audio.removeAttribute('src');
+        audio.load();
+      } catch (_) { /* ignore */ }
       resolve(value);
     };
     const timer = setTimeout(() => finish(0), 8000);   // 读不出来的音频别把导入挂死
@@ -301,6 +312,8 @@ function getImageThumbnail(dataURL) {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      // 用完把 img 的来源放开，避免解码结果被这个临时元素继续引用
+      try { img.removeAttribute('src'); } catch (_) { /* ignore */ }
       resolve(value);
     };
     const timer = setTimeout(() => finish(''), 8000);   // 异常图片别把导入挂死
@@ -1499,7 +1512,7 @@ function renderGrid() {
           if (a !== -1 && b !== -1) {
             const [start, end] = a < b ? [a, b] : [b, a];
             for (let k = start; k <= end; k++) state.selection.add(ordered[k].id);
-            renderGrid();
+            syncGridSelection();
             updateBatchBar();
             return;
           }
@@ -1508,7 +1521,7 @@ function renderGrid() {
         // 普通点击：清空多选并预览
         if (state.selection.size) {
           state.selection.clear();
-          renderGrid();
+          syncGridSelection();
           updateBatchBar();
         }
         selectItem(id);
@@ -1519,6 +1532,60 @@ function renderGrid() {
   const filterLabels = { all: '全部', image: '图片', video: '视频', audio: '音频', note: '笔记', other: '其他文件' };
   $('#statusCount').textContent = `${items.length} 个项目`;
   $('#statusType').textContent = filterLabels[state.filter] || '全部';
+}
+
+// 预览区里的 <video>/<audio> 光把元素摘掉不会立刻释放解码帧和缓冲，
+// 必须显式停掉 + 清空 src + load()，否则内存会一直挂着（切来切去越占越多）
+function releaseStageMedia(stage) {
+  if (!stage) return;
+  for (const el of stage.querySelectorAll('video, audio')) {
+    try {
+      el.pause();
+      el.removeAttribute('src');
+      el.srcObject = null;
+      el.load();
+    } catch (_) { /* ignore */ }
+  }
+}
+
+// 视频控件的 ResizeObserver：每次预览都会新建一个，不 disconnect 会一直持有旧元素
+let previewResizeObserver = null;
+
+function releasePreviewObserver() {
+  if (!previewResizeObserver) return;
+  try { previewResizeObserver.disconnect(); } catch (_) { /* ignore */ }
+  previewResizeObserver = null;
+}
+
+// 只同步"选中 / 勾选"状态，不重建整张列表。
+// 整表重建会让 Chromium 把每个缩略图重新解码一遍（GPUCache 与渲染进程内存一路涨），
+// 所以条目和顺序没变时就只改 class —— 这是内存占用的主要来源之一。
+function syncGridSelection() {
+  const grid = $('#thumbGrid');
+
+  if (isMusicGroup(state.selectedGroupId)) {
+    renderGrid();
+    return;
+  }
+
+  grid.classList.toggle('is-batch-mode', state.selection.size > 0);
+  updatePreviewNav();
+
+  const items = getFilteredItems();
+  const cards = Array.from(grid.querySelectorAll('.thumb-card'));
+  const sameList = cards.length === items.length
+    && cards.every((card, idx) => card.dataset.id === items[idx].id);
+
+  if (!sameList) {
+    renderGrid();
+    return;
+  }
+
+  for (const card of cards) {
+    const id = card.dataset.id;
+    card.classList.toggle('is-active', id === state.selectedId);
+    card.classList.toggle('is-selected', state.selection.has(id));
+  }
 }
 
 function renderMetaGroupOptions() {
@@ -1659,9 +1726,11 @@ function createSpeedControl(video, host) {
 
   place();
   if (window.ResizeObserver) {
-    // 视频尺寸一变（元数据加载、窗口缩放）就重新对齐
-    const ro = new ResizeObserver(place);
-    ro.observe(video);
+    // 视频尺寸一变（元数据加载、窗口缩放）就重新对齐；
+    // 存成模块级变量，切预览时统一 disconnect（否则每个预览都留一个观察者）
+    releasePreviewObserver();
+    previewResizeObserver = new ResizeObserver(place);
+    previewResizeObserver.observe(video);
   }
 
   return box;
@@ -1669,7 +1738,7 @@ function createSpeedControl(video, host) {
 
 async function selectItem(id) {
   state.selectedId = id;
-  renderGrid();
+  syncGridSelection();   // 只改选中态，不重建列表（省下重复解码缩略图的开销与内存）
 
   const item = state.items.find((i) => i.id === id);
   if (!item) return;
@@ -1678,6 +1747,8 @@ async function selectItem(id) {
   const notePreview = $('#notePreview');
   const previewPanel = $('#previewPanel');
 
+  releaseStageMedia(stage);
+  releasePreviewObserver();
   stage.innerHTML = '';
   notePreview.hidden = true;
 
@@ -1874,7 +1945,7 @@ function selectAllInList() {
   }
   for (const item of items) state.selection.add(item.id);
   state.lastSelectedId = items[items.length - 1].id;
-  renderGrid();
+  syncGridSelection();
   updateBatchBar();
 }
 
@@ -1891,7 +1962,7 @@ function deleteSelection() {
 function clearSelection() {
   if (!state.selection.size) return;
   state.selection.clear();
-  renderGrid();
+  syncGridSelection();
   updateBatchBar();
 }
 
@@ -1900,7 +1971,7 @@ function toggleSelection(id) {
   if (state.selection.has(id)) state.selection.delete(id);
   else state.selection.add(id);
   state.lastSelectedId = id;
-  renderGrid();
+  syncGridSelection();
   updateBatchBar();
 }
 
@@ -1998,6 +2069,8 @@ async function saveCurrentMeta() {
 function resetPreview() {
   state.selectedId = null;
   const stage = $('#previewStage');
+  releaseStageMedia(stage);       // 先把播放器停掉并清空 src，内存立刻回收
+  releasePreviewObserver();
   stage.hidden = false;
   stage.innerHTML = `
     <div class="preview-placeholder">

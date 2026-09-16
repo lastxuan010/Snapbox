@@ -16,6 +16,19 @@ try {
 
 const zlib = require('zlib');
 
+// 少占内存：这个应用完全用不到的 Chromium 常驻服务全部关掉（每个都会占一块内存和后台线程）
+app.commandLine.appendSwitch('disable-features', [
+  'MediaRouter',                  // 投屏
+  'Translate',                    // 网页翻译
+  'BackForwardCache',             // 前进/后退缓存（本地应用没有页面导航）
+  'OptimizationHints',            // 联网获取站点优化提示
+  'InterestFeedContentSuggestions',
+  'AutofillServerCommunication',  // 表单自动填充联网
+  'SegmentationPlatform',
+  'FederatedLearningOfCohorts',
+  'PrivacySandboxSettings4'
+].join(','));
+
 const MIME_MAP = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -66,6 +79,8 @@ function createWindow() {
       contextIsolation: true,
       // 打开插件支持：预览区才能用上 Chromium 自带的 PDF 阅读器（翻页 / 缩放 / 搜索）
       plugins: true,
+      // 不加载拼写检查词典（省内存；界面是中文，笔记也不需要英文红波浪线）
+      spellcheck: false,
       preload: path.join(__dirname, 'preload.js')
     },
     backgroundColor: '#f5f5f7',
@@ -95,6 +110,9 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // 双保险：拼写检查器在 session 层也关掉
+  try { session.defaultSession.setSpellCheckerEnabled(false); } catch (_) { /* ignore */ }
+
   createWindow();
 
   app.on('activate', () => {
