@@ -14,9 +14,6 @@
   "author": "TraeDesign",
   "license": "MIT",
   "devDependencies": {
-    "@codemirror/lang-markdown": "^6.5.2",
-    "@codemirror/language-data": "^6.5.2",
-    "codemirror": "^6.0.2",
     "docx-preview": "^0.4.0",
     "electron": "^31.0.0",
     "electron-builder": "^24.13.3",
@@ -31,6 +28,11 @@
       "output": "dist"
     },
     "electronDist": "_electron-dist",
+    "compression": "maximum",
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
     "files": [
       "**/*",
       "!library/**",
@@ -71,8 +73,5 @@
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true
     }
-  },
-  "dependencies": {
-    "archiver": "^6.0.2"
   }
 }

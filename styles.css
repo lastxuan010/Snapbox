@@ -610,6 +610,9 @@ body {
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
   box-shadow: var(--shadow-xs);
+  /* 屏外的卡片跳过布局与绘制：条目多的时候滚动明显更顺（尺寸要接近实际卡片，避免滚动条跳动） */
+  content-visibility: auto;
+  contain-intrinsic-size: 96px 96px;
 }
 
 .thumb-card:hover {

@@ -14,12 +14,7 @@ try {
   // 兜底：指不过去就用 Electron 默认目录，别让应用起不来
 }
 
-// 打包库按需加载：万一它加载不了，也只影响"压缩备份"这一个功能，不会拖垮整个应用启动
-let archiverLib = null;
-function getArchiver() {
-  if (!archiverLib) archiverLib = require('archiver');
-  return archiverLib;
-}
+const zlib = require('zlib');
 
 const MIME_MAP = {
   '.jpg': 'image/jpeg',
@@ -596,6 +591,142 @@ function timeStamp() {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
+// ---------- 内置 ZIP 写入器 ----------
+// 原来用 archiver，但它拉进来 39 个包、8.5MB（其中 5.2MB 的 bare-* 在 Node 上根本用不到）。
+// 备份只需要"deflate 压缩 + 目录名 + UTF-8 文件名"这几件事，用 Node 自带的 zlib 直接写就够了。
+
+const ZIP_CRC_TABLE = (() => {
+  const table = new Int32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    table[i] = c;
+  }
+  return table;
+})();
+
+function crc32(buf) {
+  let c = -1;
+  for (let i = 0; i < buf.length; i++) c = (c >>> 8) ^ ZIP_CRC_TABLE[(c ^ buf[i]) & 0xff];
+  return (c ^ -1) >>> 0;
+}
+
+// 本身已压缩的格式不再二次压缩：省时间，体积几乎一样
+const ZIP_STORE_EXT = new Set([
+  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif', '.ico', '.heic',
+  '.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v', '.wmv', '.flv',
+  '.mp3', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.flac', '.wma',
+  '.zip', '.7z', '.rar', '.gz', '.pdf', '.docx', '.xlsx', '.pptx', '.apk'
+]);
+
+const ZIP_DOS_EPOCH = new Date(1980, 0, 1);
+
+function zipDosStamp(date) {
+  const d = date && date > ZIP_DOS_EPOCH ? date : ZIP_DOS_EPOCH;
+  return {
+    time: (d.getHours() << 11) | (d.getMinutes() << 5) | Math.floor(d.getSeconds() / 2),
+    day: ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()
+  };
+}
+
+// files: [{ entryName, file } | { entryName, buffer, mtime?, onProgress? }]
+async function writeZip(target, files) {
+  const handle = await fs.promises.open(target, 'w');
+  const central = [];
+  let offset = 0;
+  let done = 0;
+
+  try {
+    for (const f of files) {
+      const fromText = f.buffer !== undefined;
+      const data = fromText ? Buffer.from(String(f.buffer), 'utf8') : await fs.promises.readFile(f.file);
+      if (data.length >= 0xffffffff) throw new Error(`「${f.entryName}」超过 4GB，暂不支持打包备份`);
+
+      const nameBuf = Buffer.from(f.entryName, 'utf8');
+      const store = !fromText && ZIP_STORE_EXT.has(path.extname(f.entryName).toLowerCase());
+      const compressed = store ? data : zlib.deflateRawSync(data, { level: 9 });
+      const crc = crc32(data);
+      const { time, day } = zipDosStamp(new Date());
+
+      const local = Buffer.alloc(30);
+      local.writeUInt32LE(0x04034b50, 0);      // 本地文件头
+      local.writeUInt16LE(20, 4);              // 解压所需版本 2.0
+      local.writeUInt16LE(0x0800, 6);          // 文件名按 UTF-8 解释（中文名不乱码）
+      local.writeUInt16LE(store ? 0 : 8, 8);   // 0=存储 8=deflate
+      local.writeUInt16LE(time, 10);
+      local.writeUInt16LE(day, 12);
+      local.writeUInt32LE(crc, 14);
+      local.writeUInt32LE(compressed.length, 18);
+      local.writeUInt32LE(data.length, 22);
+      local.writeUInt16LE(nameBuf.length, 26);
+      local.writeUInt16LE(0, 28);              // 扩展字段长度
+
+      await handle.write(local);
+      await handle.write(nameBuf);
+      await handle.write(compressed);
+
+      central.push({
+        nameBuf,
+        crc,
+        method: store ? 0 : 8,
+        time,
+        day,
+        compressed: compressed.length,
+        size: data.length,
+        offset
+      });
+
+      offset += local.length + nameBuf.length + compressed.length;
+      if (offset > 0xffffffff) throw new Error('备份总大小超过 4GB，暂不支持');
+      done++;
+      if (typeof f.onProgress === 'function') f.onProgress(done, files.length);
+    }
+
+    // 中央目录
+    const cdStart = offset;
+    for (const e of central) {
+      const rec = Buffer.alloc(46);
+      rec.writeUInt32LE(0x02014b50, 0);
+      rec.writeUInt16LE(20, 4);                // 创建版本
+      rec.writeUInt16LE(20, 6);                // 解压所需版本
+      rec.writeUInt16LE(0x0800, 8);
+      rec.writeUInt16LE(e.method, 10);
+      rec.writeUInt16LE(e.time, 12);
+      rec.writeUInt16LE(e.day, 14);
+      rec.writeUInt32LE(e.crc, 16);
+      rec.writeUInt32LE(e.compressed, 20);
+      rec.writeUInt32LE(e.size, 24);
+      rec.writeUInt16LE(e.nameBuf.length, 28);
+      rec.writeUInt16LE(0, 30);                // 扩展字段
+      rec.writeUInt16LE(0, 32);                // 注释
+      rec.writeUInt16LE(0, 34);                // 起始磁盘
+      rec.writeUInt16LE(0, 36);                // 内部属性
+      rec.writeUInt32LE(0, 38);                // 外部属性
+      rec.writeUInt32LE(e.offset, 42);
+      await handle.write(rec);
+      await handle.write(e.nameBuf);
+      offset += rec.length + e.nameBuf.length;
+    }
+    const cdSize = offset - cdStart;
+
+    // 中央目录结束记录
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0);
+    eocd.writeUInt16LE(0, 4);
+    eocd.writeUInt16LE(0, 6);
+    eocd.writeUInt16LE(central.length, 8);
+    eocd.writeUInt16LE(central.length, 10);
+    eocd.writeUInt32LE(cdSize, 12);
+    eocd.writeUInt32LE(cdStart, 16);
+    eocd.writeUInt16LE(0, 20);
+    await handle.write(eocd);
+  } finally {
+    await handle.close();
+  }
+
+  return { entries: central.length };
+}
+
 // 把一批条目打包成 library/zip/<label>.zip
 // items: [{ kind: 'file', id, name, path } | { kind: 'note', title, html }]
 ipcMain.handle('archive-items', async (event, payload) => {
@@ -644,37 +775,20 @@ ipcMain.handle('archive-items', async (event, payload) => {
       return { ok: false, error: '所选内容的文件都不在磁盘上了', missing };
     }
 
-    const archiver = getArchiver();
-    const output = fs.createWriteStream(target);
-    const archive = archiver('zip', { zlib: { level: 9 } });
-    const finished = new Promise((resolve, reject) => {
-      output.on('close', resolve);
-      output.on('error', reject);
-      archive.on('error', reject);
-      archive.on('warning', (err) => {
-        if (err && err.code !== 'ENOENT') reject(err);
-      });
-    });
-
     // 进度回传（按"已完成条目数"去重，避免刷屏）
     let lastSent = -1;
-    archive.on('progress', (data) => {
-      const processed = data && data.entries ? data.entries.processed : 0;
-      if (processed === lastSent) return;
-      lastSent = processed;
-      try {
-        event.sender.send('archive-progress', { entries: processed, total: entries.length });
-      } catch (_) { /* 窗口可能已关闭 */ }
-    });
-
-    archive.pipe(output);
-    for (const e of entries) {
-      if (e.html !== undefined) archive.append(e.html, { name: e.entryName });
-      else archive.file(e.file, { name: e.entryName });
-    }
-
-    await archive.finalize();
-    await finished;
+    await writeZip(target, entries.map((e) => ({
+      entryName: e.entryName,
+      buffer: e.html,
+      file: e.html === undefined ? e.file : undefined,
+      onProgress: (done, total) => {
+        if (done === lastSent) return;
+        lastSent = done;
+        try {
+          event.sender.send('archive-progress', { entries: done, total });
+        } catch (_) { /* 窗口可能已关闭 */ }
+      }
+    })));
 
     return {
       ok: true,

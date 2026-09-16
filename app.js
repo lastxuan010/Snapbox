@@ -191,9 +191,27 @@ async function readFileAsDataURL(file) {
   });
 }
 
+// 列表卡片最宽也就 ~120px，256px 的缩略图足够清晰；
+// 之前存 320px/0.85 偏大，而且生成失败时会退化成"整张原图 / 整段视频"的 base64 ——
+// 那是列表渲染慢的主因（11 个条目的缩略图能撑到 6.8MB），所以这里既压小又绝不回退成大图。
+const THUMB_MAX_EDGE = 256;
+const THUMB_QUALITY = 0.72;
+// 正常缩略图都在 30KB 以内，超过这个体积一定是早期版本存的异常数据
+const THUMB_SANE_BYTES = 120 * 1024;
+
 function getVideoThumbnail(videoURL) {
   return new Promise((resolve) => {
     const video = document.createElement('video');
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    // 万一解码卡住（损坏的视频 / 不支持的编码），别把导入流程挂死
+    const timer = setTimeout(() => finish(null), 8000);
+
     video.src = videoURL;
     video.crossOrigin = 'anonymous';
     video.muted = true;
@@ -202,14 +220,18 @@ function getVideoThumbnail(videoURL) {
       video.currentTime = Math.min(1, video.duration / 10) || 0.1;
     };
     video.onseeked = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = 320;
-      canvas.height = (video.videoHeight / video.videoWidth) * 320 || 180;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL('image/jpeg', 0.85));
+      try {
+        const scale = Math.min(1, THUMB_MAX_EDGE / (video.videoWidth || THUMB_MAX_EDGE));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round((video.videoWidth || THUMB_MAX_EDGE) * scale));
+        canvas.height = Math.max(1, Math.round((video.videoHeight || 180) * scale));
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        finish(canvas.toDataURL('image/jpeg', THUMB_QUALITY));
+      } catch (_) {
+        finish(null);
+      }
     };
-    video.onerror = () => resolve(null);
+    video.onerror = () => finish(null);
   });
 }
 
@@ -217,32 +239,85 @@ function getVideoThumbnail(videoURL) {
 function getAudioDuration(dataURL) {
   return new Promise((resolve) => {
     const audio = document.createElement('audio');
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(0), 8000);   // 读不出来的音频别把导入挂死
     audio.preload = 'metadata';
     audio.onloadedmetadata = () => {
-      resolve(Number.isFinite(audio.duration) ? audio.duration : 0);
+      finish(Number.isFinite(audio.duration) ? audio.duration : 0);
     };
-    audio.onerror = () => resolve(0);
+    audio.onerror = () => finish(0);
     audio.src = dataURL;
   });
 }
 
-// 图片缩略图：等比缩到最长边 320px 的 JPEG，避免把原图 base64 存进数据库
+// 早期版本在缩略图生成失败时会退化成"整张原图 / 整段视频"的 base64（单个能到几 MB），
+// 而每次渲染列表都要解析这些巨串 —— 启动后在空闲时间里把它们重做成正常尺寸。
+// 扫一遍只是比长度（很快），修完就再也不会命中，属于一次性的自愈。
+async function repairThumbnails() {
+  const oversized = state.items.filter((it) => (it.thumbnail || '').length > THUMB_SANE_BYTES);
+  if (!oversized.length) return 0;
+
+  let fixed = 0;
+  for (const item of oversized) {
+    try {
+      if (String(item.thumbnail).startsWith('data:image/')) {
+        item.thumbnail = (await getImageThumbnail(item.thumbnail)) || '';
+      } else if (item.type === 'video') {
+        // 视频条目的"缩略图"位置存的其实是整段视频 → 重新抽一帧
+        const diskPath = itemDiskPath(item);
+        const res = diskPath ? await window.electronAPI?.readFileDataUrl?.(diskPath) : null;
+        const frame = (res && res.ok) ? await getVideoThumbnail(res.dataUrl) : null;
+        item.thumbnail = frame || '';
+      } else {
+        item.thumbnail = '';
+      }
+      await saveItem(item);
+      fixed++;
+    } catch (_) { /* 单个失败不影响其他 */ }
+    // 让出主线程，修复过程不要影响正在进行的操作
+    await new Promise((r) => setTimeout(r, 30));
+  }
+
+  if (fixed) {
+    renderGrid();
+    showToast(`已重建 ${fixed} 个过大的缩略图，列表翻页会更快`, { duration: 5000 });
+  }
+  return fixed;
+}
+
+// 图片缩略图：等比缩到最长边 256px 的 JPEG，避免把原图 base64 存进数据库。
+// 生成失败时返回空字符串（卡片用扩展名兜底），绝不回退成原图 —— 否则数据库和列表都会被撑爆。
 function getImageThumbnail(dataURL) {
   return new Promise((resolve) => {
     const img = new Image();
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(''), 8000);   // 异常图片别把导入挂死
+
     img.onload = () => {
       try {
-        const scale = Math.min(1, 320 / Math.max(img.width || 1, img.height || 1));
+        const scale = Math.min(1, THUMB_MAX_EDGE / Math.max(img.width || 1, img.height || 1));
         const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round((img.width || 320) * scale));
-        canvas.height = Math.max(1, Math.round((img.height || 320) * scale));
+        canvas.width = Math.max(1, Math.round((img.width || THUMB_MAX_EDGE) * scale));
+        canvas.height = Math.max(1, Math.round((img.height || THUMB_MAX_EDGE) * scale));
         canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', 0.82));
+        finish(canvas.toDataURL('image/jpeg', THUMB_QUALITY));
       } catch (_) {
-        resolve(dataURL);
+        finish('');
       }
     };
-    img.onerror = () => resolve(dataURL);
+    img.onerror = () => finish('');
     img.src = dataURL;
   });
 }
@@ -663,6 +738,24 @@ function buildSheetTable(sheet) {
   return table;
 }
 
+// office.bundle.js 有 1.7MB（docx/xlsx/pptx 三个解析库）：改成按需加载，
+// 只有真的点开文档预览时才拉起来，启动时不用白白解析这一大坨
+let officeBundlePromise = null;
+
+function ensureOfficeBundle() {
+  if (window.MemorieOffice) return Promise.resolve(true);
+  if (!officeBundlePromise) {
+    officeBundlePromise = new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = 'office.bundle.js';
+      script.onload = () => resolve(Boolean(window.MemorieOffice));
+      script.onerror = () => resolve(false);
+      document.head.appendChild(script);
+    });
+  }
+  return officeBundlePromise;
+}
+
 // 读取文档字节并按类型渲染；任何一步失败都退回"文件卡"，不把预览区留空
 async function renderOfficePreview(stage, item, kind) {
   const diskPath = itemDiskPath(item);
@@ -670,8 +763,8 @@ async function renderOfficePreview(stage, item, kind) {
     renderOtherPreview(stage, item, '文档还没落盘（未入库），读不到内容');
     return;
   }
-  if (kind !== 'pdf' && !window.MemorieOffice) {
-    renderOtherPreview(stage, item, '文档预览组件没加载出来（office.bundle.js 缺失）');
+  if (kind !== 'pdf' && !(await ensureOfficeBundle())) {
+    renderOtherPreview(stage, item, '文档预览组件加载失败（office.bundle.js 缺失）');
     return;
   }
 
@@ -829,7 +922,8 @@ async function addFiles(files) {
     let thumbnail = '';
     let duration = 0;
     if (mediaType === 'video') {
-      thumbnail = (await getVideoThumbnail(dataURL)) || dataURL;
+      // 抽帧失败就留空（卡片显示 ▶），绝不把整段视频当缩略图存进去
+      thumbnail = (await getVideoThumbnail(dataURL)) || '';
     } else if (mediaType === 'audio') {
       duration = await getAudioDuration(dataURL);
     } else if (mediaType === 'image') {
@@ -959,6 +1053,9 @@ function applyFilter(kind) {
 }
 
 async function createNote() {
+  const targetGroupId = state.selectedGroupId !== 'all' && state.selectedGroupId !== 'ungrouped'
+    ? state.selectedGroupId
+    : null;
 
   const id = generateId();
   const now = Date.now();
@@ -1306,7 +1403,10 @@ function renderGrid() {
           ? `<div class="thumb-card__media">♪</div>`
           : isOther
             ? `<div class="thumb-card__media thumb-card__media--file"><b>${escapeHtml(fileExtLabel(item.name))}</b></div>`
-            : `<img class="thumb-card__media" src="${item.thumbnail}" alt="${escapeHtml(item.name)}" loading="lazy" draggable="false">`;
+            : item.thumbnail
+              // decoding="async"：缩略图解压交给后台线程，切分组/滚动时不卡主线程
+              ? `<img class="thumb-card__media" src="${item.thumbnail}" alt="${escapeHtml(item.name)}" loading="lazy" decoding="async" draggable="false">`
+              : `<div class="thumb-card__media thumb-card__media--file"><b>${escapeHtml(fileExtLabel(item.name))}</b></div>`;
       const badge = isNote ? '✎'
         : linked ? '⤳'
         : item.type === 'video' ? '▶'
@@ -1736,8 +1836,7 @@ async function importCurrentItem() {
   item.sourcePath = '';
   await saveItem(item);
 
-  renderGrid();
-  await selectItem(item.id);
+  await selectItem(item.id);   // selectItem 自己会重画列表，这里不用再画一次
   showToast('已导入到库');
 }
 
@@ -2094,8 +2193,9 @@ async function removeSourceKeepBackup(ids) {
     }
   }
 
-  renderGrid();
+  // 选中的条目还在的话走 selectItem（顺带重画列表），否则单独重画一次
   if (state.selectedId) await selectItem(state.selectedId);
+  else renderGrid();
 
   const parts = [`已删除 ${trashed} 个源文件（移入回收站），软件内备份保留`];
   if (skipped) parts.push(`${skipped} 项未备份已跳过`);
@@ -2192,7 +2292,6 @@ async function addCaptureItem(payload) {
       onAction: () => {
         state.selectedGroupId = group.id;
         renderFolders();
-        renderGrid();
         selectItem(item.id);
       }
     }
@@ -4663,6 +4762,9 @@ async function init() {
   restoreMetaPanelState();
   restorePanelFoldState();
   initCapture();
+
+  // 启动稳定之后再去修历史遗留的超大缩略图（首次会提示一条，之后都是空跑）
+  setTimeout(() => { repairThumbnails().catch(() => {}); }, 1500);
 
   // 该功能上线前导入的资源还在旧位置：首次启动自动整理一次（只跑一次）
   if (!localStorage.getItem(ORGANIZED_KEY)) {
