@@ -2801,6 +2801,149 @@ h1, h2, h3, h4, h5, h6 {
   letter-spacing: 1px;
 }
 
+/* ===== PDF / Office 文档预览 ===== */
+/* 绝对定位铺满：预览区是 position:relative 的 flex 容器，
+   靠 height:100% 在 auto 高度下会塌回内容高度（PDF 阅读器实测只剩 186px） */
+.office-wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  min-height: 0;
+}
+
+.office-actions {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.office-notice {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--foreground-secondary);
+  text-align: center;
+}
+
+.office-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: var(--shadow-xs);
+}
+
+/* PDF：Chromium 自带阅读器自己带工具条，容器不加内边距 */
+.office-stage--pdf {
+  overflow: hidden;
+  background: var(--background-tertiary);
+}
+
+.pdf-viewer {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* docx：docx-preview 自己会分页，这里只负责底色和居中 */
+.office-stage--docx {
+  padding: 16px;
+  background: var(--background-tertiary);
+}
+
+.docx-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.docx-body .docx-wrapper {
+  padding: 0;
+  background: transparent;
+}
+
+.docx-body .docx-wrapper > section.docx {
+  margin-bottom: 16px;
+  box-shadow: var(--shadow-xs);
+}
+
+/* xlsx：表头吸顶，长表格滚动时不会看丢列名 */
+.sheet-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 10px 0;
+  background: #fff;
+}
+
+.sheet-tab {
+  padding: 5px 12px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--foreground-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sheet-tab:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+.sheet-tab.is-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 600;
+}
+
+.sheet-body {
+  padding: 10px;
+}
+
+.sheet-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.sheet-table th,
+.sheet-table td {
+  max-width: 320px;
+  padding: 4px 8px;
+  border: 1px solid var(--input-border);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sheet-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--secondary);
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+/* pptx：pptx-preview 按页渲染，底色让它更像演示文稿 */
+.office-stage--pptx {
+  padding: 12px;
+  background: var(--background-tertiary);
+}
+
 .audio-stage__name {
   max-width: 100%;
   font-size: 14px;

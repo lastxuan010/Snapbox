@@ -14,6 +14,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // 按路径读取文件为 data URL（渲染进程无权直接读磁盘，由主进程代读）
   readFileDataUrl: (filePath) => ipcRenderer.invoke('read-file-data-url', filePath),
+  // 按路径读取原始字节（PDF / Office 在线预览用；超过 60MB 会被拒）
+  readFileBytes: (filePath) => ipcRenderer.invoke('read-file-bytes', filePath),
+  // 用系统默认程序打开文件（docx / xlsx / pptx 等）
+  openExternal: (filePath) => ipcRenderer.invoke('open-external', filePath),
   // 检查原路径文件是否存在
   checkFileExists: (filePath) => ipcRenderer.invoke('check-file-exists', filePath),
   // 复制图片（data URL）到系统剪贴板

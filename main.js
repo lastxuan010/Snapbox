@@ -53,6 +53,8 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      // 打开插件支持：预览区才能用上 Chromium 自带的 PDF 阅读器（翻页 / 缩放 / 搜索）
+      plugins: true,
       preload: path.join(__dirname, 'preload.js')
     },
     backgroundColor: '#f5f5f7',
@@ -164,6 +166,38 @@ ipcMain.handle('read-file-data-url', (event, filePath) => {
     return { ok: true, dataUrl: `data:${mime};base64,${buffer.toString('base64')}` };
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) };
+  }
+});
+
+// 读取任意本地路径文件的原始字节（PDF / Office 在线预览用）
+// 走字节而不是 base64：省一次编解码、内存也小一半
+const READ_BYTES_LIMIT = 60 * 1024 * 1024;
+ipcMain.handle('read-file-bytes', (event, filePath) => {
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return { ok: false, error: '不是文件' };
+    if (stat.size > READ_BYTES_LIMIT) {
+      return {
+        ok: false,
+        tooLarge: true,
+        error: `文件超过 ${Math.round(READ_BYTES_LIMIT / 1024 / 1024)}MB，不在软件内预览`
+      };
+    }
+    const buffer = fs.readFileSync(filePath);
+    return { ok: true, bytes: new Uint8Array(buffer), size: buffer.length };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
+// 用系统默认程序打开文件（docx / xlsx / pptx 交给 Office / WPS，保真度最高）
+ipcMain.handle('open-external', async (event, filePath) => {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: '文件不存在' };
+    const message = await shell.openPath(filePath);
+    return message ? { ok: false, error: message } : { ok: true };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
   }
 });
 

@@ -31,7 +31,13 @@ if not exist "node_modules\.bin\electron.cmd" (
   )
 )
 
-REM 3. 启动应用
+REM 3. 构建文档预览包（PDF 用系统阅读器，docx/xlsx/pptx 靠这份包）
+if not exist "office.bundle.js" (
+  echo [提示] 正在构建文档预览组件，请稍候...
+  call npm run build:office
+)
+
+REM 4. 启动应用
 echo [启动] 正在启动 Memorie ...
 call npm start
 

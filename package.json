@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "build:office": "esbuild src-office/office-entry.js --bundle --format=iife --minify --platform=browser --outfile=office.bundle.js"
   },
   "author": "TraeDesign",
   "license": "MIT",
@@ -29,6 +30,9 @@
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language-data": "^6.5.2",
     "archiver": "^6.0.2",
-    "codemirror": "^6.0.2"
+    "codemirror": "^6.0.2",
+    "docx-preview": "^0.4.0",
+    "pptx-preview": "^1.0.7",
+    "xlsx": "^0.18.5"
   }
 }

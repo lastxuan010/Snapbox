@@ -532,8 +532,217 @@ function isOtherItem(item) {
   return Boolean(item) && item.type === 'other';
 }
 
-// 其他文件：给一张"文件卡"，显示扩展名与文件名（不做内容预览）
-function renderOtherPreview(stage, item) {
+// ===== PDF / Office 文档预览 =====
+// PDF 交给 Chromium 自带的阅读器（翻页 / 缩放 / 搜索都有，保真度 100%）；
+// docx / xlsx / pptx 用打包好的 office.bundle.js（纯前端解析、不联网）
+const OFFICE_EXT_KINDS = {
+  pdf: 'pdf',
+  docx: 'docx',
+  xlsx: 'xlsx',
+  xls: 'xlsx',
+  csv: 'xlsx',
+  pptx: 'pptx'
+};
+
+function fileExtOf(name) {
+  const parts = String(name || '').split('.');
+  return parts.length > 1 ? parts.pop().toLowerCase() : '';
+}
+
+// 「其他文件」里哪些能当文档预览（老的 doc / xls / ppt 是二进制格式，这几个库读不了）
+function officeKindOf(item) {
+  if (!item || item.type !== 'other') return '';
+  return OFFICE_EXT_KINDS[fileExtOf(item.name)] || '';
+}
+
+let officeObjectUrl = ''; // PDF 用的 blob URL：切走时要回收，不然一直占着内存
+
+function releaseOfficeObjectUrl() {
+  if (!officeObjectUrl) return;
+  try { URL.revokeObjectURL(officeObjectUrl); } catch (_) { /* ignore */ }
+  officeObjectUrl = '';
+}
+
+// 文档类预览共用的两个出口：交给系统默认程序（保真度最高）/ 在资源管理器里定位
+function officeActions(item) {
+  const bar = document.createElement('div');
+  bar.className = 'office-actions';
+
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.className = 'btn btn--primary btn--sm';
+  openBtn.textContent = '用默认程序打开';
+  openBtn.addEventListener('click', async () => {
+    const res = await window.electronAPI?.openExternal?.(itemDiskPath(item));
+    if (!res || !res.ok) showToast('打开失败：' + ((res && res.error) || '未知错误'));
+  });
+
+  const folderBtn = document.createElement('button');
+  folderBtn.type = 'button';
+  folderBtn.className = 'btn btn--secondary btn--sm';
+  folderBtn.textContent = '在文件夹中显示';
+  folderBtn.addEventListener('click', () => {
+    const diskPath = itemDiskPath(item);
+    if (diskPath) window.electronAPI?.showInExplorer?.(diskPath);
+  });
+
+  bar.appendChild(openBtn);
+  bar.appendChild(folderBtn);
+  return bar;
+}
+
+function officeNotice(text) {
+  const p = document.createElement('p');
+  p.className = 'office-notice';
+  p.textContent = text;
+  return p;
+}
+
+// 表格只画前 2000 行：Excel 动辄几万行，全画出来会卡死（也不会有谁真在预览里看几万行）
+const SHEET_MAX_ROWS = 2000;
+
+function buildSheetTable(sheet) {
+  const rows = (sheet && sheet.rows) || [];
+  if (!rows.length) return officeNotice('这个工作表是空的');
+
+  const shown = rows.slice(0, SHEET_MAX_ROWS + 1); // 首行当表头，所以多取一行
+  const cols = shown.reduce((n, r) => Math.max(n, r.length), 0);
+  const table = document.createElement('table');
+  table.className = 'sheet-table';
+
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  for (let c = 0; c < cols; c++) {
+    const th = document.createElement('th');
+    th.textContent = shown[0][c] === undefined ? '' : String(shown[0][c]);
+    headRow.appendChild(th);
+  }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  for (let r = 1; r < shown.length; r++) {
+    const tr = document.createElement('tr');
+    for (let c = 0; c < cols; c++) {
+      const td = document.createElement('td');
+      td.textContent = shown[r][c] === undefined ? '' : String(shown[r][c]);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return table;
+}
+
+// 读取文档字节并按类型渲染；任何一步失败都退回"文件卡"，不把预览区留空
+async function renderOfficePreview(stage, item, kind) {
+  const diskPath = itemDiskPath(item);
+  if (!diskPath) {
+    renderOtherPreview(stage, item, '文档还没落盘（未入库），读不到内容');
+    return;
+  }
+  if (kind !== 'pdf' && !window.MemorieOffice) {
+    renderOtherPreview(stage, item, '文档预览组件没加载出来（office.bundle.js 缺失）');
+    return;
+  }
+
+  stage.innerHTML = '<div class="preview-placeholder"><p>正在读取文档…</p></div>';
+  const res = await window.electronAPI?.readFileBytes?.(diskPath);
+  // 期间用户可能已切换选中项
+  if (state.selectedId !== item.id) return;
+  stage.innerHTML = '';
+  if (!res || !res.ok) {
+    renderOtherPreview(stage, item, (res && res.error) || '文件读取失败');
+    return;
+  }
+
+  const bytes = res.bytes instanceof Uint8Array ? res.bytes : new Uint8Array(res.bytes);
+  const wrap = document.createElement('div');
+  wrap.className = 'office-wrap';
+  wrap.appendChild(officeActions(item));
+  stage.appendChild(wrap);
+
+  const box = document.createElement('div');
+  box.className = 'office-stage office-stage--' + kind;
+  wrap.appendChild(box);
+
+  try {
+    if (kind === 'pdf') {
+      // Chromium 阅读器要一个 URL：用 blob（比 data URL 省内存），切走时回收
+      releaseOfficeObjectUrl();
+      officeObjectUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+      const frame = document.createElement('embed');
+      frame.className = 'pdf-viewer';
+      frame.type = 'application/pdf';
+      frame.src = officeObjectUrl;
+      box.appendChild(frame);
+      return;
+    }
+
+    if (kind === 'docx') {
+      // 文档自带样式单独放一个容器，免得污染整个界面
+      const style = document.createElement('div');
+      style.className = 'docx-styles';
+      const body = document.createElement('div');
+      body.className = 'docx-body';
+      box.appendChild(style);
+      box.appendChild(body);
+      await window.MemorieOffice.renderDocx(bytes, body, style);
+      return;
+    }
+
+    if (kind === 'xlsx') {
+      // 传文件名：csv / tsv 是纯文本，要按文本解码（否则中文乱码）
+      const sheets = window.MemorieOffice.parseXlsx(bytes, item.name);
+      if (!sheets.length) {
+        box.appendChild(officeNotice('这个表格是空的'));
+        return;
+      }
+
+      const body = document.createElement('div');
+      body.className = 'sheet-body';
+      body.appendChild(buildSheetTable(sheets[0]));
+
+      if (sheets.length > 1) {
+        const tabs = document.createElement('div');
+        tabs.className = 'sheet-tabs';
+        sheets.forEach((sheet, idx) => {
+          const tab = document.createElement('button');
+          tab.type = 'button';
+          tab.className = 'sheet-tab' + (idx === 0 ? ' is-active' : '');
+          tab.textContent = sheet.name;
+          tab.addEventListener('click', () => {
+            tabs.querySelectorAll('.sheet-tab').forEach((t) => t.classList.remove('is-active'));
+            tab.classList.add('is-active');
+            body.replaceChildren(buildSheetTable(sheets[idx]));
+          });
+          tabs.appendChild(tab);
+        });
+        box.appendChild(tabs);
+      }
+      box.appendChild(body);
+
+      const total = ((sheets[0].rows || []).length) - 1;
+      if (total > SHEET_MAX_ROWS) {
+        box.appendChild(officeNotice(`表格太长，这里只显示前 ${SHEET_MAX_ROWS} 行（共 ${total} 行）`));
+      }
+      return;
+    }
+
+    if (kind === 'pptx') {
+      window.MemorieOffice.renderPptx(bytes, box, { width: Math.max(320, stage.clientWidth - 40) });
+      return;
+    }
+  } catch (err) {
+    // 解析失败：退回文件卡，并把原因说清楚
+    stage.innerHTML = '';
+    releaseOfficeObjectUrl();
+    renderOtherPreview(stage, item, '这个文件解析失败：' + ((err && err.message) || err));
+  }
+}
+
+// 其他文件：给一张"文件卡"，显示扩展名与文件名（文档类走上面的文档阅读器）
+function renderOtherPreview(stage, item, note) {
   const wrap = document.createElement('div');
   wrap.className = 'audio-stage';
 
@@ -547,6 +756,16 @@ function renderOtherPreview(stage, item) {
 
   wrap.appendChild(art);
   wrap.appendChild(nameEl);
+
+  if (note) {
+    const tip = document.createElement('div');
+    tip.className = 'office-notice';
+    tip.textContent = note;
+    wrap.appendChild(tip);
+  }
+
+  // 能定位到磁盘文件时，给一个"交给系统默认程序"的出口
+  if (itemDiskPath(item)) wrap.appendChild(officeActions(item));
   stage.appendChild(wrap);
 }
 
@@ -1296,13 +1515,18 @@ async function selectItem(id) {
     stage.hidden = false;
     stage.innerHTML = '<div class="preview-placeholder"><p>加载中…</p></div>';
 
-    // 「其他文件」不做内容预览（可能是几百 MB 的压缩包，也不是能直接显示的类型）
+    // 「其他文件」不走 data URL（可能是几百 MB 的压缩包，读成 base64 太浪费）；
+    // 其中 PDF / Office 文档有专门的阅读器，交给 renderOfficePreview
+    const docKind = officeKindOf(item);
     const preview = isOtherItem(item) ? { ok: true, other: true } : await resolvePreviewUrl(item);
     // 期间用户可能已切换选中项
     if (state.selectedId !== item.id) return;
     stage.innerHTML = '';
+    releaseOfficeObjectUrl();
 
-    if (preview.other) {
+    if (docKind) {
+      await renderOfficePreview(stage, item, docKind);
+    } else if (preview.other) {
       renderOtherPreview(stage, item);
     } else if (!preview.ok) {
       showMissingPreview(stage, item);
