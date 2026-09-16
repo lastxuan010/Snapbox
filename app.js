@@ -895,7 +895,8 @@ async function createNote() {
     createdAt: now,
     time: formatDateTimeLocal(new Date(now)),
     category: '',
-    description: '# 新笔记\n\n在这里写下 Markdown 内容…',
+    // 新笔记不再预填"在这里写下 Markdown 内容…"这句提示，免得每次都要手动删掉
+    description: '# 新笔记',
     groupId: targetGroupId
   };
 
