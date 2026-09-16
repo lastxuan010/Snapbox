@@ -564,7 +564,8 @@ function releaseOfficeObjectUrl() {
 }
 
 // 文档类预览共用的两个出口：交给系统默认程序（保真度最高）/ 在资源管理器里定位。
-// 这排按钮会浮在文档右下角，所以标签保持简短，完整说明放 title
+// 这排按钮会浮在文档右下角，所以标签保持简短，完整说明放 title；右侧还有个收起把手
+const OFFICE_ACTIONS_COLLAPSED_KEY = 'memorie.officeActionsCollapsed';
 function officeActions(item) {
   const bar = document.createElement('div');
   bar.className = 'office-actions';
@@ -591,6 +592,26 @@ function officeActions(item) {
 
   bar.appendChild(openBtn);
   bar.appendChild(folderBtn);
+
+  // 收起把手：和左侧栏的收起按钮用同一套 ‹ / › 语言，状态记在 localStorage 里
+  const foldBtn = document.createElement('button');
+  foldBtn.type = 'button';
+  foldBtn.className = 'office-actions__fold';
+  const applyCollapsed = (collapsed) => {
+    bar.classList.toggle('is-collapsed', collapsed);
+    foldBtn.textContent = collapsed ? '‹' : '›';
+    foldBtn.title = collapsed ? '展开「打开 / 位置」' : '收起「打开 / 位置」';
+    foldBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  };
+  applyCollapsed(localStorage.getItem(OFFICE_ACTIONS_COLLAPSED_KEY) === '1');
+  foldBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const next = !bar.classList.contains('is-collapsed');
+    applyCollapsed(next);
+    localStorage.setItem(OFFICE_ACTIONS_COLLAPSED_KEY, next ? '1' : '0');
+  });
+  bar.appendChild(foldBtn);
+
   return bar;
 }
 

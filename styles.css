@@ -2862,6 +2862,37 @@ h1, h2, h3, h4, h5, h6 {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
 }
 
+/* 收起后只剩一颗把手，不挡文档 */
+.office-wrap > .office-actions.is-collapsed > :not(.office-actions__fold) {
+  display: none;
+}
+
+.office-wrap > .office-actions.is-collapsed {
+  padding: 4px;
+  border-radius: 50%;
+}
+
+.office-actions__fold {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: #f5f5f7;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.office-actions__fold:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 .office-actions {
   display: flex;
   gap: 8px;
