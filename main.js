@@ -740,6 +740,8 @@ function createImagePin(image, region) {
     dipW0: dipW, dipH0: dipH,
     // 缩放用浮点记住"逻辑尺寸"，只有写进窗口那一刻才取整
     scaleW: dipW, scaleH: dipH,
+    // 位置同样用浮点累加：系统会把窗口坐标取整，读回来再加增量每次都丢一点（实测每挪一次丢 1px）
+    posX: x, posY: y,
     // 外框与内容区的差值（无边框窗在 Windows 上也可能差 1~3px），缩放时要补回去
     padX: 0, padY: 0
   });
@@ -776,7 +778,18 @@ function createImagePin(image, region) {
     fitContent();
     win.showInactive();
     // setBounds 生效有延迟，稍后再校一次
-    setTimeout(() => { if (!win.isDestroyed()) { fitContent(); recordPad(); } }, 90);
+    setTimeout(() => {
+      if (win.isDestroyed()) return;
+      fitContent();
+      recordPad();
+      // 校正过窗口尺寸后，把浮点位置也对齐到实际值，免得第一次拖动跳一下
+      const entry = pinWindows.get(key);
+      if (entry) {
+        const cur = win.getBounds();
+        entry.posX = cur.x;
+        entry.posY = cur.y;
+      }
+    }, 90);
   });
   win.on('closed', () => { pinWindows.delete(key); });
   return win;
@@ -822,7 +835,22 @@ ipcMain.on('pin-move', (event, delta) => {
   const dy = Math.round((delta && delta.dy) || 0);
   if (!dx && !dy) return;
   const b = entry.win.getBounds();
-  entry.win.setBounds({ x: b.x + dx, y: b.y + dy, width: b.width, height: b.height });
+  // 尺寸必须用"记住的目标尺寸"重新写一遍，不能把 getBounds() 读回来的值再写回去：
+  // 125% 这类非整数缩放下，系统会按物理像素网格把窗口尺寸取整，读回来的值已经被取整过，
+  // 于是误差每挪一次累积一次 —— 实测 40 次拖动后内容区从 400x300 变成 452x336，
+  // 图被 object-fit: contain 放大，看起来就是"拖动时被放大"。
+  // 每次都写目标尺寸，取整误差就不会累积（实测 40 次后内容区仍是 400x300）。
+  const contentW = Math.max(24, Math.round(entry.scaleW));
+  const contentH = Math.max(16, Math.round(entry.scaleH));
+  // 位置同理：用浮点累加再取整，不然每次都被系统取整，拖着会跟不上鼠标
+  entry.posX = (Number.isFinite(entry.posX) ? entry.posX : b.x) + dx;
+  entry.posY = (Number.isFinite(entry.posY) ? entry.posY : b.y) + dy;
+  entry.win.setBounds({
+    x: Math.round(entry.posX),
+    y: Math.round(entry.posY),
+    width: contentW + (entry.padX || 0),
+    height: contentH + (entry.padY || 0)
+  });
 });
 
 // 滚轮缩放：以光标为锚点，保证光标下的那个点不动（和 Snipaste 一致）
@@ -850,9 +878,12 @@ ipcMain.on('pin-scale', (event, payload) => {
   const relX = inner.width ? (cursor.x - inner.x) / inner.width : 0.5;
   const relY = inner.height ? (cursor.y - inner.y) / inner.height : 0.5;
 
+  // 缩放后位置变了，浮点位置要跟着同步，否则接下来第一次拖动会跳一下
+  entry.posX = cursor.x - relX * contentW - padX / 2;
+  entry.posY = cursor.y - relY * contentH - padY / 2;
   entry.win.setBounds({
-    x: Math.round(cursor.x - relX * contentW - padX / 2),
-    y: Math.round(cursor.y - relY * contentH - padY / 2),
+    x: Math.round(entry.posX),
+    y: Math.round(entry.posY),
     width: contentW + padX,
     height: contentH + padY
   });
