@@ -4,7 +4,7 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 echo ============================================
-echo    Memorie 媒体档案管理器 - 启动脚本
+echo    Snapbox 媒体档案管理器 - 启动脚本
 echo ============================================
 echo.
 
@@ -38,7 +38,7 @@ if not exist "office.bundle.js" (
 )
 
 REM 4. 启动应用
-echo [启动] 正在启动 Memorie ...
+echo [启动] 正在启动 Snapbox ...
 call npm start
 
 echo.

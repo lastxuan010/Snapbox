@@ -43,7 +43,7 @@ const MIME_MAP = {
 let appWindow = null;
 
 // Windows 任务栏靠 AppUserModelID 关联应用（dev 模式下图标才认得准）
-if (process.platform === 'win32') app.setAppUserModelId('com.traedesign.media-archive');
+if (process.platform === 'win32') app.setAppUserModelId('com.traedesign.snapbox');
 
 function createWindow() {
   const mainWindow = new BrowserWindow({

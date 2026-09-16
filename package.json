@@ -17,8 +17,8 @@
     "esbuild": "^0.28.2"
   },
   "build": {
-    "appId": "com.traedesign.media-archive",
-    "productName": "Media Archive",
+    "appId": "com.traedesign.snapbox",
+    "productName": "Snapbox",
     "directories": {
       "output": "dist"
     },

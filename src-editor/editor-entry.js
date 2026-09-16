@@ -1,5 +1,5 @@
 /**
- * Memorie 笔记编辑器内核（CodeMirror 6）
+ * Snapbox 笔记编辑器内核（CodeMirror 6）
  * 打包为 IIFE，暴露全局对象 NoteEditorBundle 供 app.js 调用。
  *
  * 构建命令（项目根目录）：
