@@ -2413,6 +2413,155 @@ async function toggleRecording() {
   }
 }
 
+// ===== 设置：截屏 / 录屏的全局快捷键 =====
+const SETTINGS_HOTKEY_FIELDS = {
+  screenshot: '#settingsShotKey',
+  record: '#settingsRecordKey'
+};
+
+let hotkeyCaptureTarget = ''; // 正在等用户按下的那一项
+
+// 把 KeyboardEvent 翻译成 Electron 的 accelerator 写法
+function acceleratorFromEvent(e) {
+  const mods = [];
+  if (e.ctrlKey) mods.push('Control');
+  if (e.shiftKey) mods.push('Shift');
+  if (e.altKey) mods.push('Alt');
+  if (e.metaKey) mods.push('Super');
+
+  const key = e.key;
+  if (['Control', 'Shift', 'Alt', 'Meta', 'AltGraph'].includes(key)) return ''; // 只按了修饰键，继续等
+  if (key === 'Escape') return 'ESCAPE_CANCEL';
+
+  let name = '';
+  if (/^F([1-9]|1\d|2[0-4])$/.test(key)) name = key;             // F1 ~ F24
+  else if (key === ' ') name = 'Space';
+  else if (key === 'Enter') name = 'Return';
+  else if (key === 'Tab') name = 'Tab';
+  else if (key === 'Backspace' || key === 'Delete') return '';    // 太容易误触，不给用
+  else if (key.length === 1) name = key.toUpperCase();            // 字母 / 数字
+  else if (key.startsWith('Arrow')) name = key.slice(5);          // Up / Down / Left / Right
+  else if (['Home', 'End', 'PageUp', 'PageDown', 'Insert', 'PrintScreen'].includes(key)) name = key;
+  else return '';
+
+  return mods.concat([name]).join('+');
+}
+
+function renderHotkeySettings(state) {
+  const configured = (state && state.configured) || {};
+  const active = (state && state.active) || {};
+  for (const which of Object.keys(SETTINGS_HOTKEY_FIELDS)) {
+    const el = $(SETTINGS_HOTKEY_FIELDS[which]);
+    if (!el) continue;
+    const want = configured[which] || '';
+    const real = active[which] || '';
+    el.textContent = want || '未设置';
+    // 被别的程序占用而降级过时，把"实际生效"的键也标出来
+    const downgraded = Boolean(real && want && real !== want);
+    el.classList.toggle('is-downgraded', downgraded);
+    el.title = downgraded
+      ? prettyHotkey(want) + ' 被其他程序占用，当前实际用的是 ' + prettyHotkey(real)
+      : '点击后按下新的快捷键';
+  }
+}
+
+function setSettingsNote(text, isError) {
+  const note = $('#settingsNote');
+  if (!note) return;
+  note.textContent = text || '';
+  note.classList.toggle('is-error', Boolean(isError));
+}
+
+function stopHotkeyCapture() {
+  hotkeyCaptureTarget = '';
+  $$('.settings-key').forEach((el) => el.classList.remove('is-recording'));
+}
+
+async function openSettings() {
+  const overlay = $('#settingsOverlay');
+  if (!overlay) return;
+  overlay.hidden = false;
+  setSettingsNote('');
+  stopHotkeyCapture();
+
+  // 面板打开期间先停掉全局热键，否则"按下想设置的键"会真的去截图/录屏
+  await window.electronAPI?.pauseCaptureHotkeys?.(true);
+  renderHotkeySettings(await window.electronAPI?.getCaptureHotkeySettings?.());
+}
+
+async function closeSettings() {
+  const overlay = $('#settingsOverlay');
+  if (!overlay) return;
+  overlay.hidden = true;
+  stopHotkeyCapture();
+  const res = await window.electronAPI?.pauseCaptureHotkeys?.(false);
+  if (res && res.active) {
+    if (res.active.screenshot) captureHotkeys.screenshot = prettyHotkey(res.active.screenshot);
+    if (res.active.record) captureHotkeys.record = prettyHotkey(res.active.record);
+  }
+}
+
+async function applyHotkey(which, accelerator) {
+  setSettingsNote('正在应用…');
+  const res = await window.electronAPI?.setCaptureHotkeys?.({ [which]: accelerator });
+  if (!res) { setSettingsNote('设置失败：主进程没有响应', true); return; }
+  renderHotkeySettings(res);
+  if (res.failed && res.failed.length) {
+    setSettingsNote(res.failed.join('；') + '，已保留原来的键', true);
+    return;
+  }
+  const real = (res.active && res.active[which]) || accelerator;
+  setSettingsNote('已改为 ' + prettyHotkey(real) + '，立即生效');
+}
+
+function initSettings() {
+  $('#settingsBtn')?.addEventListener('click', () => { openSettings(); });
+  $('#settingsCloseBtn')?.addEventListener('click', () => { closeSettings(); });
+  // 点面板外的灰底也能关掉
+  $('#settingsOverlay')?.addEventListener('mousedown', (e) => {
+    if (e.target && e.target.id === 'settingsOverlay') closeSettings();
+  });
+
+  $$('.settings-key').forEach((el) => {
+    el.addEventListener('click', () => {
+      hotkeyCaptureTarget = el.dataset.which;
+      $$('.settings-key').forEach((b) => b.classList.toggle('is-recording', b === el));
+      setSettingsNote('请按下新的快捷键…（按 Esc 取消）');
+    });
+  });
+
+  $('#settingsResetBtn')?.addEventListener('click', async () => {
+    setSettingsNote('正在恢复默认…');
+    const res = await window.electronAPI?.setCaptureHotkeys?.({ screenshot: 'F4', record: 'F6' });
+    if (!res) { setSettingsNote('恢复失败：主进程没有响应', true); return; }
+    renderHotkeySettings(res);
+    if (res.failed && res.failed.length) { setSettingsNote(res.failed.join('；'), true); return; }
+    setSettingsNote('已恢复默认：截屏 F4 / 录屏 F6');
+  });
+
+  // 录制按键：用捕获阶段，避免被别处的快捷键处理挡掉
+  document.addEventListener('keydown', (e) => {
+    const overlay = $('#settingsOverlay');
+    if (!overlay || overlay.hidden) return;
+
+    // 没在录制按键时，Esc 关面板
+    if (!hotkeyCaptureTarget) {
+      if (e.key === 'Escape') { e.preventDefault(); closeSettings(); }
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+    const acc = acceleratorFromEvent(e);
+    if (acc === 'ESCAPE_CANCEL') { stopHotkeyCapture(); setSettingsNote('已取消'); return; }
+    if (!acc) return; // 只按了修饰键，继续等
+
+    const which = hotkeyCaptureTarget;
+    stopHotkeyCapture();
+    applyHotkey(which, acc);
+  }, true);
+}
+
 function initCapture() {
   // 默认分组先备好（顺便把分组名告诉主进程）
   ensureCaptureGroup().catch(() => {});
@@ -3989,6 +4138,7 @@ function stepPreview(delta) {
 
 function initEvents() {
   initTitleBar();
+  initSettings();
 
   // 分组栏 / 列表栏收起
   $('#foldFoldersBtn').addEventListener('click', () => {

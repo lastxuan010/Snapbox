@@ -608,13 +608,36 @@ ipcMain.handle('open-zip-folder', () => {
   }
 });
 
-// ---------- 截图 / 录屏（F4 截图 / F6 录屏，录屏含系统声音）----------
+// ---------- 截图 / 录屏（默认 F4 截图 / F6 录屏，录屏含系统声音）----------
 
-// 想换键只改这里：界面上的提示文案会跟着这里走，不会写死
-const CAPTURE_HOTKEYS = {
-  screenshot: { key: 'F4', fallback: 'Control+F4' },
-  record: { key: 'F6', fallback: 'Control+F6' }
-};
+// 快捷键可以在界面「设置」里改，存进 userData/capture-settings.json，下次启动照旧生效
+const DEFAULT_CAPTURE_HOTKEYS = { screenshot: 'F4', record: 'F6' };
+let captureHotkeys = { ...DEFAULT_CAPTURE_HOTKEYS };
+// 实际注册成功的键（被别的程序占用时会降级成 Ctrl+ 组合）
+let registeredCaptureKeys = { screenshot: '', record: '' };
+
+function captureSettingsPath() {
+  return path.join(app.getPath('userData'), 'capture-settings.json');
+}
+
+function loadCaptureHotkeys() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(captureSettingsPath(), 'utf8'));
+    for (const which of ['screenshot', 'record']) {
+      if (raw && typeof raw[which] === 'string' && raw[which].trim()) {
+        captureHotkeys[which] = raw[which].trim();
+      }
+    }
+  } catch (_) { /* 文件不存在或坏了就用默认值 */ }
+}
+
+function saveCaptureHotkeys() {
+  try {
+    fs.writeFileSync(captureSettingsPath(), JSON.stringify(captureHotkeys, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[capture] 快捷键设置保存失败：' + err);
+  }
+}
 
 let captureGroupName = '截图/录屏';
 
@@ -981,6 +1004,40 @@ function registerCaptureHotkey(accelerator, fallback, handler, label) {
     message: label + ' 快捷键注册失败（' + accelerator + ' 被其他程序占用）'
   }), 2000);
   return '';
+}
+
+// 按当前设置注册截图/录屏热键；改键时重新调用（会先注销上一批）
+function registerCaptureHotkeys() {
+  for (const which of ['screenshot', 'record']) {
+    const key = registeredCaptureKeys[which];
+    if (!key) continue;
+    try { globalShortcut.unregister(key); } catch (_) { /* ignore */ }
+    registeredCaptureKeys[which] = '';
+  }
+
+  const handlers = {
+    // 框选过程中再按热键 = 取消框选（否则会以为按键没反应）
+    screenshot: () => {
+      if (regionPickerActive()) closeRegionPicker(null);
+      else sendToRenderer('capture-take-screenshot');
+    },
+    record: () => {
+      if (regionPickerActive()) closeRegionPicker(null);
+      else sendToRenderer('capture-toggle-recording');
+    }
+  };
+  const labels = { screenshot: '截图', record: '录屏' };
+
+  for (const which of ['screenshot', 'record']) {
+    const key = captureHotkeys[which];
+    // 单键（如 F4）被占用时自动降级为 Ctrl+ 组合；用户自己设的组合键就不再降级
+    const fallback = /\+/.test(key) ? key : 'Control+' + key;
+    registeredCaptureKeys[which] = registerCaptureHotkey(key, fallback, handlers[which], labels[which]);
+  }
+
+  // 把最终生效的键告诉界面，提示文案才不会和实际按键脱节
+  sendToRenderer('capture-hotkeys', { ...registeredCaptureKeys });
+  return { ...registeredCaptureKeys };
 }
 
 // 渲染进程会告诉主进程"截图/录屏存哪个分组"
@@ -1383,30 +1440,54 @@ app.whenReady().then(() => {
     console.warn('[capture] 录屏源处理器设置失败：' + err);
   }
 
-  // 全局注册，App 不在前台也能用
-  // 框选过程中再按热键 = 取消框选（否则会以为按键没反应）
-  const activeHotkeys = {
-    screenshot: registerCaptureHotkey(
-      CAPTURE_HOTKEYS.screenshot.key,
-      CAPTURE_HOTKEYS.screenshot.fallback,
-      () => {
-        if (regionPickerActive()) closeRegionPicker(null);
-        else sendToRenderer('capture-take-screenshot');
-      },
-      '截图'
-    ),
-    record: registerCaptureHotkey(
-      CAPTURE_HOTKEYS.record.key,
-      CAPTURE_HOTKEYS.record.fallback,
-      () => {
-        if (regionPickerActive()) closeRegionPicker(null);
-        else sendToRenderer('capture-toggle-recording');
-      },
-      '录屏'
-    )
-  };
-  // 把最终生效的键告诉界面，提示文案才不会和实际按键脱节
-  setTimeout(() => sendToRenderer('capture-hotkeys', activeHotkeys), 1500);
+  // 全局注册，App 不在前台也能用（键值来自用户在「设置」里保存的值）
+  loadCaptureHotkeys();
+  registerCaptureHotkeys();
+  // 界面这时可能还没加载完，稍后再补推一次，提示文案才不会和实际按键脱节
+  setTimeout(() => sendToRenderer('capture-hotkeys', { ...registeredCaptureKeys }), 1500);
+});
+
+// 界面「设置」：读当前快捷键
+ipcMain.handle('get-capture-hotkeys', () => ({
+  ok: true,
+  configured: { ...captureHotkeys },
+  active: { ...registeredCaptureKeys },
+  defaults: { ...DEFAULT_CAPTURE_HOTKEYS }
+}));
+
+// 界面「设置」：改快捷键（先试着注册，注册不上就回滚这一项）
+ipcMain.handle('set-capture-hotkeys', (event, payload) => {
+  const prev = { ...captureHotkeys };
+  for (const which of ['screenshot', 'record']) {
+    const value = payload && typeof payload[which] === 'string' ? payload[which].trim() : '';
+    if (value) captureHotkeys[which] = value;
+  }
+
+  let active = registerCaptureHotkeys();
+  const failed = [];
+  for (const which of ['screenshot', 'record']) {
+    if (!active[which]) {
+      failed.push((which === 'screenshot' ? '截图' : '录屏') + ' ' + captureHotkeys[which] + ' 注册不上（可能被别的程序占用）');
+      captureHotkeys[which] = prev[which];
+    }
+  }
+  // 有失败的项就按回滚后的值再注册一次
+  if (failed.length) active = registerCaptureHotkeys();
+
+  saveCaptureHotkeys();
+  return { ok: failed.length === 0, active, configured: { ...captureHotkeys }, failed };
+});
+
+// 打开设置面板时先停掉全局热键：否则"按下想设置的键"会先触发截图/录屏
+ipcMain.handle('pause-capture-hotkeys', (event, paused) => {
+  if (!paused) return { ok: true, active: registerCaptureHotkeys() };
+  for (const which of ['screenshot', 'record']) {
+    const key = registeredCaptureKeys[which];
+    if (!key) continue;
+    try { globalShortcut.unregister(key); } catch (_) { /* ignore */ }
+    registeredCaptureKeys[which] = '';
+  }
+  return { ok: true, active: { ...registeredCaptureKeys } };
 });
 
 app.on('window-all-closed', () => {

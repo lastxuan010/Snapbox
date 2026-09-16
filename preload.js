@@ -69,6 +69,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onToggleRecording: (cb) => ipcRenderer.on('capture-toggle-recording', () => cb()),
   // 主进程实际生效的热键（用于界面提示文案）
   onCaptureHotkeys: (cb) => ipcRenderer.on('capture-hotkeys', (event, payload) => cb(payload)),
+  // 设置面板：读/改截屏录屏快捷键（改完立即生效并落盘）
+  getCaptureHotkeySettings: () => ipcRenderer.invoke('get-capture-hotkeys'),
+  setCaptureHotkeys: (payload) => ipcRenderer.invoke('set-capture-hotkeys', payload),
+  // 打开设置面板时停用全局热键，免得"按要设置的键"反而触发截图/录屏
+  pauseCaptureHotkeys: (paused) => ipcRenderer.invoke('pause-capture-hotkeys', !!paused),
   // 快捷键被占用 / 降级的提示
   onCaptureHotkeyNotice: (cb) => ipcRenderer.on('capture-hotkey-notice', (event, payload) => cb(payload)),
   // 把一批条目打包成 zip（存到 library/zip/），返回压缩包路径

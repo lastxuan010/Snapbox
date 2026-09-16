@@ -32,6 +32,10 @@
           </div>
         </div>
         <div class="folder-list folder-list--vertical" id="folderList"></div>
+        <button class="folder-settings" id="settingsBtn" type="button" title="设置（截屏 / 录屏快捷键）">
+          <span class="folder-settings__icon">⚙</span>
+          <span class="folder-settings__text">设置</span>
+        </button>
       </aside>
 
       <aside class="sidebar">
@@ -344,6 +348,39 @@
       <div class="link-dialog__actions">
         <button type="button" class="btn btn--secondary" id="linkCancelBtn">取消</button>
         <button type="button" class="btn btn--primary" id="linkConfirmBtn" disabled>确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设置：截屏 / 录屏的全局快捷键 -->
+  <div class="settings-overlay" id="settingsOverlay" hidden>
+    <div class="settings-card" role="dialog" aria-modal="true" aria-label="设置">
+      <div class="settings-card__header">
+        <h2 class="settings-card__title">设置</h2>
+        <button class="btn btn--ghost btn--sm" id="settingsCloseBtn" type="button" title="关闭（Esc）">✕</button>
+      </div>
+
+      <div class="settings-card__body">
+        <div class="settings-section__title">快捷键</div>
+        <p class="settings-hint">
+          点一下右边的按键框，然后按下你想用的键。单键（如 F4）或组合键（如 Ctrl+Shift+S）都支持，按 Esc 取消。
+        </p>
+
+        <div class="settings-row">
+          <span class="settings-row__label">截屏</span>
+          <button class="settings-key" id="settingsShotKey" type="button" data-which="screenshot">F4</button>
+        </div>
+        <div class="settings-row">
+          <span class="settings-row__label">录屏</span>
+          <button class="settings-key" id="settingsRecordKey" type="button" data-which="record">F6</button>
+        </div>
+
+        <p class="settings-note" id="settingsNote"></p>
+      </div>
+
+      <div class="settings-card__footer">
+        <button class="btn btn--secondary btn--sm" id="settingsResetBtn" type="button">恢复默认（F4 / F6）</button>
+        <span class="settings-card__tip">改完立即生效，下次启动也照旧</span>
       </div>
     </div>
   </div>

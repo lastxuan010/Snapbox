@@ -3224,6 +3224,163 @@ h1, h2, h3, h4, h5, h6 {
     grid-template-rows: 1fr 1fr;
   }
 }
+/* ===== 设置：左侧栏底部入口 + 快捷键面板 ===== */
+.folder-sidebar .folder-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.folder-settings {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.folder-settings:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+.folder-settings__icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* 分组栏收起成 30px 时只留齿轮图标 */
+.workspace.is-folders-collapsed .folder-settings__text { display: none; }
+.workspace.is-folders-collapsed .folder-settings { justify-content: center; padding: 8px 0; }
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.settings-overlay[hidden] { display: none; }
+
+.settings-card {
+  width: min(460px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border-radius: var(--radius-lg);
+  background: var(--background);
+  box-shadow: var(--shadow-lg);
+}
+
+.settings-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-card__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.settings-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-section__title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--foreground-secondary);
+}
+
+.settings-hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--foreground-secondary);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-row__label {
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+.settings-key {
+  min-width: 132px;
+  padding: 7px 14px;
+  border: 1px dashed var(--input-border);
+  border-radius: var(--radius-sm);
+  background: var(--secondary);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.settings-key:hover { border-color: var(--primary); }
+
+.settings-key.is-recording {
+  border-style: solid;
+  border-color: var(--primary);
+  background: var(--accent-soft);
+  color: var(--primary);
+}
+
+.settings-key.is-downgraded {
+  border-color: var(--destructive);
+  color: var(--destructive);
+}
+
+.settings-note {
+  margin: 2px 0 0;
+  min-height: 18px;
+  font-size: 12.5px;
+  color: var(--foreground-secondary);
+}
+
+.settings-note.is-error { color: var(--destructive); }
+
+.settings-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-card__tip {
+  font-size: 12px;
+  color: var(--foreground-secondary);
+}
+
 @media (max-width: 1000px) {
   :root {
     --sidebar-width: 140px;
