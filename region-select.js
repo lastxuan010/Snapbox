@@ -6,8 +6,17 @@ const sizeEl = document.getElementById('size');
 const toolsEl = document.getElementById('tools');
 const fullBtn = document.getElementById('fullBtn');
 
-// 截图模式带操作条（复制/保存/固定）；录屏模式只用来框范围
+// 两种模式都有操作条，位置完全一致；只是按钮不同
+// （截图：复制/保存/固定；录屏：开始录制。录屏不再只能靠 Enter / Esc）
 const MODE = new URLSearchParams(location.search).get('mode') === 'record' ? 'record' : 'shot';
+
+toolsEl.querySelectorAll('[data-when]').forEach((el) => {
+  el.hidden = el.dataset.when !== MODE;
+});
+if (MODE === 'record') {
+  document.getElementById('tipHint').textContent = '拖动鼠标框选要录的范围';
+  document.getElementById('tipKeys').textContent = '点「开始录制」或按 Enter';
+}
 
 const DPR = window.devicePixelRatio || 1;
 const MIN = 8; // 小于这个尺寸视为"只是点了一下"，不算选中
@@ -53,11 +62,8 @@ function paint() {
   sizeEl.style.left = clamp(rect.x, 4, Math.max(4, W() - 130)) + 'px';
   sizeEl.style.top = (below ? rect.y + rect.h + 8 : Math.max(4, rect.y - 26)) + 'px';
 
-  // 操作条贴在选区右下角；放不下就翻到选区上方
-  if (MODE !== 'shot') {
-    toolsEl.hidden = true;
-    return;
-  }
+  // 操作条贴在选区右下角；放不下就翻到选区上方。
+  // 截图和录屏共用这一套定位逻辑 → 按钮位置始终一致
   toolsEl.hidden = false;
   const tw = toolsEl.offsetWidth || 260;
   const th = toolsEl.offsetHeight || 32;

@@ -86,6 +86,14 @@ html, body {
 #tools button[data-act="pin"] { background: #4c8dff; color: #fff; font-weight: 600; }
 #tools button[data-act="pin"]:hover { background: #3a7aeb; }
 
+/* 录屏的主按钮同样是"高亮那颗"，和截图的操作条观感一致 */
+#tools button[data-act="record"] { background: #4c8dff; color: #fff; font-weight: 600; }
+#tools button[data-act="record"]:hover { background: #3a7aeb; }
+
+/* 按模式显隐：录屏用「开始录制」，截图用「复制 / 保存 / 固定」 */
+#tools [hidden] { display: none !important; }
+.tools__sep[hidden] { display: none !important; }
+
 .tools__sep {
   width: 1px;
   height: 16px;
