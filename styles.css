@@ -1388,14 +1388,15 @@ body {
   margin-left: auto;
 }
 
-/* 收起：分组栏 */
+/* 收起：分组栏
+   宽度收成刚好包住那颗 26px 的展开按钮（44px 时两侧各空 3px，两个栏都收起就白占 88px） */
 .workspace.is-folders-collapsed {
-  --sidebar-width: 44px;
+  --sidebar-width: 30px;
 }
 
 .workspace.is-folders-collapsed .folder-sidebar {
-  padding-left: 6px;
-  padding-right: 6px;
+  padding-left: 2px;
+  padding-right: 2px;
 }
 
 .workspace.is-folders-collapsed .folder-sidebar__title,
@@ -1409,14 +1410,14 @@ body {
   padding: 0;
 }
 
-/* 收起：列表栏 */
+/* 收起：列表栏（同上，宽度收成刚好包住按钮） */
 .workspace.is-list-collapsed {
-  --library-width: 44px;
+  --library-width: 30px;
 }
 
 .workspace.is-list-collapsed .panel--left {
-  padding-left: 6px;
-  padding-right: 6px;
+  padding-left: 2px;
+  padding-right: 2px;
 }
 
 .workspace.is-list-collapsed .panel--left > .filter-bar,
