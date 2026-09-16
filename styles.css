@@ -124,10 +124,9 @@ body {
 .titlebar__logo {
   width: 22px;
   height: 22px;
-  display: grid;
-  place-items: center;
-  color: var(--primary);
-  font-size: 14px;
+  display: block;
+  border-radius: 6px;
+  object-fit: cover;
 }
 
 .titlebar__title {

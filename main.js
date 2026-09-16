@@ -42,12 +42,17 @@ const MIME_MAP = {
 // 不能再靠"取第 0 个窗口"来给界面发消息
 let appWindow = null;
 
+// Windows 任务栏靠 AppUserModelID 关联应用（dev 模式下图标才认得准）
+if (process.platform === 'win32') app.setAppUserModelId('com.traedesign.media-archive');
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 900,
     minHeight: 600,
+    // 应用图标（任务栏、窗口左上角）；源图是 webp，已转成 assets/app-icon.png
+    icon: path.join(__dirname, 'assets', 'app-icon.png'),
     frame: false,
     titleBarStyle: 'hidden',
     webPreferences: {

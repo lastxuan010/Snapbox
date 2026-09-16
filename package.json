@@ -23,6 +23,7 @@
       "output": "dist"
     },
     "win": {
+      "icon": "assets/app-icon.png",
       "target": "nsis"
     }
   },
