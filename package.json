@@ -5,16 +5,24 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "prebuild": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/brand-electron.ps1",
     "build": "electron-builder",
+    "predist": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/brand-electron.ps1",
     "dist": "electron-builder --win",
     "build:office": "esbuild src-office/office-entry.js --bundle --format=iife --minify --platform=browser --outfile=office.bundle.js"
   },
   "author": "TraeDesign",
   "license": "MIT",
   "devDependencies": {
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language-data": "^6.5.2",
+    "codemirror": "^6.0.2",
+    "docx-preview": "^0.4.0",
     "electron": "^31.0.0",
     "electron-builder": "^24.13.3",
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "pptx-preview": "^1.0.7",
+    "xlsx": "^0.18.5"
   },
   "build": {
     "appId": "com.traedesign.snapbox",
@@ -22,18 +30,49 @@
     "directories": {
       "output": "dist"
     },
+    "electronDist": "_electron-dist",
+    "files": [
+      "**/*",
+      "!library/**",
+      "!dist/**",
+      "!src-editor/**",
+      "!src-office/**",
+      "!scripts/**",
+      "!start.bat",
+      "!package-lock.json",
+      "!_*",
+      "!_electron-dist/**",
+      "!*.log",
+      "!**/*.md",
+      "!**/*.map",
+      "!node_modules/.cache/**"
+    ],
     "win": {
       "icon": "assets/app-icon.png",
-      "target": "nsis"
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Snapbox",
+      "artifactName": "Snapbox-Setup-${version}.${ext}",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
     }
   },
   "dependencies": {
-    "@codemirror/lang-markdown": "^6.5.2",
-    "@codemirror/language-data": "^6.5.2",
-    "archiver": "^6.0.2",
-    "codemirror": "^6.0.2",
-    "docx-preview": "^0.4.0",
-    "pptx-preview": "^1.0.7",
-    "xlsx": "^0.18.5"
+    "archiver": "^6.0.2"
   }
 }

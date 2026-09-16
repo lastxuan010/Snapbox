@@ -3,6 +3,17 @@ const { app, BrowserWindow, ipcMain, clipboard, shell, nativeImage, dialog, glob
 const path = require('path');
 const fs = require('fs');
 
+// 数据目录钉死：资源库 / 分组 / 设置全在这里。
+// 打包后 productName 会改变 Electron 默认的 userData 名称 —— 换个显示名不该让老用户的库"消失"，
+// 所以显式指回原来的目录（%APPDATA%\media-archive），开发版和安装版共用同一份数据。
+try {
+  const dataDir = path.join(app.getPath('appData'), 'media-archive');
+  fs.mkdirSync(dataDir, { recursive: true });
+  app.setPath('userData', dataDir);
+} catch (_) {
+  // 兜底：指不过去就用 Electron 默认目录，别让应用起不来
+}
+
 // 打包库按需加载：万一它加载不了，也只影响"压缩备份"这一个功能，不会拖垮整个应用启动
 let archiverLib = null;
 function getArchiver() {

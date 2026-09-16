@@ -16,8 +16,5 @@ Desktop.ini
 .vscode/
 .idea/
 
-# 开发期临时脚本（验证/诊断用完即删）
-_verify_*.js
-_verify_*.log
-_diag_*.js
-_diag_*.log
+# 开发期临时脚本 / 打包中间产物（一律以 _ 开头，用完即删）
+_*
