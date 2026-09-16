@@ -563,7 +563,8 @@ function releaseOfficeObjectUrl() {
   officeObjectUrl = '';
 }
 
-// 文档类预览共用的两个出口：交给系统默认程序（保真度最高）/ 在资源管理器里定位
+// 文档类预览共用的两个出口：交给系统默认程序（保真度最高）/ 在资源管理器里定位。
+// 这排按钮会浮在文档右下角，所以标签保持简短，完整说明放 title
 function officeActions(item) {
   const bar = document.createElement('div');
   bar.className = 'office-actions';
@@ -571,7 +572,8 @@ function officeActions(item) {
   const openBtn = document.createElement('button');
   openBtn.type = 'button';
   openBtn.className = 'btn btn--primary btn--sm';
-  openBtn.textContent = '用默认程序打开';
+  openBtn.textContent = '打开';
+  openBtn.title = '用默认程序打开';
   openBtn.addEventListener('click', async () => {
     const res = await window.electronAPI?.openExternal?.(itemDiskPath(item));
     if (!res || !res.ok) showToast('打开失败：' + ((res && res.error) || '未知错误'));
@@ -580,7 +582,8 @@ function officeActions(item) {
   const folderBtn = document.createElement('button');
   folderBtn.type = 'button';
   folderBtn.className = 'btn btn--secondary btn--sm';
-  folderBtn.textContent = '在文件夹中显示';
+  folderBtn.textContent = '位置';
+  folderBtn.title = '在文件夹中显示';
   folderBtn.addEventListener('click', () => {
     const diskPath = itemDiskPath(item);
     if (diskPath) window.electronAPI?.showInExplorer?.(diskPath);

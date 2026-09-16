@@ -2844,13 +2844,25 @@ h1, h2, h3, h4, h5, h6 {
   inset: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
   min-height: 0;
 }
 
+/* 操作按钮浮在文档右下角，不再单独占一行
+   （原来那行 14px 内边距 + 一行按钮 + 10px 间距 ≈ 50px，按钮还全挤在右边，上半部分就空了一条）
+   注意：不能做成"悬停才出现" —— PDF 是 Chromium 插件，鼠标在它上面移动时 DOM 收不到 hover，
+   按钮就会点不到（实测 docx 能触发、PDF 不能）。所以固定常显。 */
+.office-wrap > .office-actions {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 3;
+  padding: 5px 6px;
+  border-radius: 10px;
+  background: rgba(29, 29, 31, 0.8);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
+
 .office-actions {
-  flex: none;
   display: flex;
   gap: 8px;
   align-items: center;
