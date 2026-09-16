@@ -40,6 +40,7 @@
       "!src-editor/**",
       "!src-office/**",
       "!scripts/**",
+      "!docs/**",
       "!start.bat",
       "!package-lock.json",
       "!_*",
