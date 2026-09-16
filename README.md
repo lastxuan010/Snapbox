@@ -2,6 +2,8 @@
 
 > 一个深色玻璃质感的 Windows 媒体归档工具 —— 图片、视频、音频、笔记、其他文件，一个窗口全管。
 
+
+下载链接：https://github.com/lastxuan010/Snapbox/releases/tag/v1.0.0
 ![界面截图](docs/screenshot.png)
 
 ## 功能
