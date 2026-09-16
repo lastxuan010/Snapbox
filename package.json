@@ -11,7 +11,7 @@
     "dist": "electron-builder --win",
     "build:office": "esbuild src-office/office-entry.js --bundle --format=iife --minify --platform=browser --outfile=office.bundle.js"
   },
-  "author": "TraeDesign",
+  "author": "璃月ly",
   "license": "MIT",
   "devDependencies": {
     "docx-preview": "^0.4.0",
