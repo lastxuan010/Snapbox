@@ -982,9 +982,12 @@ function renderGrid() {
   const items = getFilteredItems();
 
   if (items.length === 0) {
-    const hint = state.selectedGroupId === 'all'
-      ? '点击上方按钮导入图片、视频、音频，或新建笔记'
-      : '该分组为空';
+    // 「其他文件」空的时候直接把"哪些文件会归到这里"讲清楚，别让人猜
+    const hint = state.selectedGroupId !== 'all'
+      ? '该分组为空'
+      : state.filter === 'other'
+        ? 'PDF、压缩包、文档等非图片 / 视频 / 音频的文件都会归到这里，点上方「添加媒体」导入'
+        : '点击上方按钮导入图片、视频、音频、其他文件，或新建笔记';
     grid.innerHTML = `
       <div class="empty-state">
         <div class="empty-state__icon">◫</div>
