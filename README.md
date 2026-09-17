@@ -17,8 +17,8 @@
 - 图片、视频（可开大播放器，带倍速）
 - 音频：内置播放器 + 歌单视图
 - 笔记：富文本编辑 + Markdown 预览
-- 文档：PDF 用 Chromium 自带阅读器；**docx / xlsx / pptx 内置解析**（按需加载）
-- 其他文件：文件卡 + 一键用系统默认程序打开
+- 文档（PDF / Word / Excel / PPT）与其他文件：文件卡 + **一键用系统默认程序打开**
+  （不在应用内解析/渲染 —— 保真度最高，也省掉几 MB 的解析库）
 
 **截图 / 录屏 / 贴图**
 - 截图（默认 `F4`）：框选区域 → 复制到剪贴板，或直接贴到屏幕上
@@ -47,7 +47,6 @@ npm start          # 开发模式启动
 
 ```bash
 npm run dist       # → dist/Snapbox-Setup-<version>.exe（NSIS 安装包）
-npm run build:office   # 需要时重新打包文档预览 bundle（office.bundle.js）
 ```
 
 安装包也会发到本仓库的 **Releases** 页面，普通用户直接下载双击安装即可。
@@ -56,7 +55,7 @@ npm run build:office   # 需要时重新打包文档预览 bundle（office.bundl
 
 - **Electron 31** + 原生 HTML/CSS/JavaScript（没有前端框架）
 - 条目与缩略图存在 **IndexedDB**；资源文件按分组落盘到 `%APPDATA%\media-archive\library`（位置可在设置里改，见下）
-- 文档预览用 esbuild 把 docx-preview / SheetJS(xlsx) / pptx-preview 打成单个 `office.bundle.js`，**点开文档时才加载**（不拖慢启动）
+- 文档类（PDF / Word / Excel / PPT）**不在应用内渲染**，直接 `shell.openPath` 交给系统默认程序，保真度最高
 - 压缩备份内置 ZIP 写入器（Node 自带 `zlib`），不依赖第三方压缩库
 - 采集（截图/录屏）走 Electron 的 `desktopCapturer` + 独立浮层窗口
 

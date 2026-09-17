@@ -8,18 +8,13 @@
     "prebuild": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/brand-electron.ps1",
     "build": "electron-builder",
     "predist": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/brand-electron.ps1",
-    "dist": "electron-builder --win",
-    "build:office": "esbuild src-office/office-entry.js --bundle --format=iife --minify --platform=browser --outfile=office.bundle.js"
+    "dist": "electron-builder --win"
   },
   "author": "璃月ly",
   "license": "MIT",
   "devDependencies": {
-    "docx-preview": "^0.4.0",
     "electron": "^31.0.0",
-    "electron-builder": "^24.13.3",
-    "esbuild": "^0.28.2",
-    "pptx-preview": "^1.0.7",
-    "xlsx": "^0.18.5"
+    "electron-builder": "^24.13.3"
   },
   "build": {
     "appId": "com.traedesign.snapbox",
@@ -38,7 +33,6 @@
       "!library/**",
       "!dist/**",
       "!src-editor/**",
-      "!src-office/**",
       "!scripts/**",
       "!docs/**",
       "!start.bat",
