@@ -20,7 +20,8 @@ const dataDirState = {
   dir: DEFAULT_DATA_DIR,
   source: 'default',   // 'default' | 'config' | 'env'
   warning: '',         // 例如"设置的目录不可用，已临时用默认位置"
-  pendingDir: ''       // 本次运行里改了、但还没重启生效的目录
+  pendingDir: '',      // 本次运行里改了、但还没重启生效的目录
+  needSetup: false     // 首次启动、还没决定放哪儿 → 启动后弹一次向导
 };
 
 function readLocator() {
@@ -79,16 +80,35 @@ function applyPendingMove() {
 
   // 源已经不存在（搬过了或手动挪走）、或本来就同一个 → 清掉标记直接用目标
   if (from === to || !fs.existsSync(from)) {
-    writeLocator({ dataDir: to });
+    writeLocator({ dataDir: to, setupDone: true });
     return;
   }
 
   try {
     moveDataDir(from, to);
-    writeLocator({ dataDir: to });
+    writeLocator({ dataDir: to, setupDone: true });
   } catch (err) {
     // 搬移失败：退回原目录，并把原因留下来告诉用户，绝不让人打开后看到空库
-    writeLocator({ dataDir: from, moveError: String((err && err.message) || err) });
+    writeLocator({ dataDir: from, setupDone: true, moveError: String((err && err.message) || err) });
+  }
+}
+
+// 这个目录里已经有东西了吗（老用户 / 之前用过）—— 决定要不要弹首次启动向导
+function dirHasData(dir) {
+  try {
+    return fs.existsSync(path.join(dir, 'library')) || fs.existsSync(path.join(dir, 'IndexedDB'));
+  } catch (_) {
+    return false;
+  }
+}
+
+// 真正切过去。必须在建任何窗口、碰 session 之前调用
+function applyDataDir() {
+  try {
+    fs.mkdirSync(dataDirState.dir, { recursive: true });
+    app.setPath('userData', dataDirState.dir);
+  } catch (_) {
+    // 兜底：指不过去就用 Electron 默认目录，别让应用起不来
   }
 }
 
@@ -123,12 +143,68 @@ function resolveDataDir() {
     dataDirState.warning = '上次搬移数据目录时出错，已保留原目录：' + moveError;
   }
 
-  try {
-    fs.mkdirSync(dataDirState.dir, { recursive: true });
-    app.setPath('userData', dataDirState.dir);
-  } catch (_) {
-    // 兜底：指不过去就用 Electron 默认目录，别让应用起不来
+  // 要不要弹"首次启动：数据放哪"：
+  // 没有任何人指定过位置（没有指针、没有环境变量），而且这个位置里也还没有数据。
+  // 老用户（目录里已经有 library / IndexedDB）直接跳过，不打扰；问过一次之后
+  // setupDone 会写进指针文件，以后永不再问。
+  const specified = Boolean(envDir) || Boolean(loc && loc.dataDir);
+  dataDirState.needSetup = !(loc && loc.setupDone) && !specified && !dirHasData(dataDirState.dir);
+
+  // 老用户悄悄补一个"已决定"的标记，免得哪天数据被清空又弹出来问
+  if (!dataDirState.needSetup && !(loc && loc.setupDone)) {
+    writeLocator({ dataDir: dataDirState.dir, setupDone: true });
   }
+
+  applyDataDir();
+}
+
+// 首次启动向导：只问这一次。问完写进指针文件，之后再也不会打扰
+// 注意：必须在 createWindow / 碰 session.defaultSession 之前执行 —— 否则 Chromium
+// 会先把缓存和 IndexedDB 建在旧位置，导致"库文件在新目录、条目索引在旧目录"的分裂
+async function runFirstRunSetup() {
+  if (!dataDirState.needSetup) return;
+
+  let dir = dataDirState.dir;
+
+  const res = await dialog.showMessageBox({
+    type: 'question',
+    buttons: ['就用这里（推荐）', '换个位置…'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    title: 'Snapbox 首次启动',
+    message: '你的文件、分组和备份都会存在这个文件夹里',
+    detail: dir + '\n\n只问这一次。以后想换，可以在「设置 → 数据目录」里改。'
+  });
+
+  if (res.response === 1) {
+    const picked = await dialog.showOpenDialog({
+      title: '选择数据存放位置',
+      defaultPath: app.getPath('home'),
+      buttonLabel: '用这个文件夹',
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (!picked.canceled && picked.filePaths.length) {
+      const check = validateDataTarget(picked.filePaths[0]);
+      if (check.ok) {
+        dir = check.dir;
+      } else {
+        await dialog.showMessageBox({
+          type: 'warning',
+          buttons: ['知道了'],
+          noLink: true,
+          message: '这个位置不能用，先按默认位置继续',
+          detail: check.error + '\n\n之后可以在「设置 → 数据目录」里再改。'
+        });
+      }
+    }
+  }
+
+  dataDirState.dir = dir;
+  dataDirState.source = path.resolve(dir) === path.resolve(DEFAULT_DATA_DIR) ? 'default' : 'config';
+  dataDirState.needSetup = false;
+  writeLocator({ dataDir: dir, setupDone: true });
+  applyDataDir();
 }
 
 resolveDataDir();
@@ -228,9 +304,15 @@ function createWindow() {
 
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // 首次启动：先问一次"数据放哪儿"。必须在碰 session / 建窗口之前
+  await runFirstRunSetup();
+
   // 双保险：拼写检查器在 session 层也关掉
   try { session.defaultSession.setSpellCheckerEnabled(false); } catch (_) { /* ignore */ }
+
+  // 录屏源 + 全局热键（也要等数据目录定下来再碰 session）
+  setupCaptureFeatures();
 
   createWindow();
 
@@ -771,8 +853,8 @@ ipcMain.handle('choose-data-dir', async (event) => {
   if (move === null) return { ok: false, canceled: true };
 
   const wrote = writeLocator(move
-    ? { dataDir: check.dir, moveFrom: dataDirState.dir }
-    : { dataDir: check.dir });
+    ? { dataDir: check.dir, setupDone: true, moveFrom: dataDirState.dir }
+    : { dataDir: check.dir, setupDone: true });
   if (!wrote) return { ok: false, error: '写设置失败：' + LOCATOR_FILE };
 
   dataDirState.pendingDir = check.dir;
@@ -790,8 +872,8 @@ ipcMain.handle('reset-data-dir', async (event) => {
   if (move === null) return { ok: false, canceled: true };
 
   const wrote = writeLocator(move
-    ? { dataDir: DEFAULT_DATA_DIR, moveFrom: dataDirState.dir }
-    : { dataDir: DEFAULT_DATA_DIR });
+    ? { dataDir: DEFAULT_DATA_DIR, setupDone: true, moveFrom: dataDirState.dir }
+    : { dataDir: DEFAULT_DATA_DIR, setupDone: true });
   if (!wrote) return { ok: false, error: '写设置失败：' + LOCATOR_FILE };
 
   dataDirState.pendingDir = DEFAULT_DATA_DIR;
@@ -1894,7 +1976,9 @@ ipcMain.on('indicator-stop', () => {
   sendToRenderer('capture-toggle-recording');
 });
 
-app.whenReady().then(() => {
+// 录屏源处理器 + 全局热键。等数据目录定下来之后再跑：
+// 它会碰 session.defaultSession，而一碰 Chromium 就会在"当时那个 userData"里建缓存和 IndexedDB
+function setupCaptureFeatures() {
   // 录屏不弹选择框，直接用鼠标所在的那块屏幕，并带上系统声音（回环采集）
   try {
     session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
@@ -1927,7 +2011,7 @@ app.whenReady().then(() => {
   registerCaptureHotkeys();
   // 界面这时可能还没加载完，稍后再补推一次，提示文案才不会和实际按键脱节
   setTimeout(() => sendToRenderer('capture-hotkeys', { ...registeredCaptureKeys }), 1500);
-});
+}
 
 // 界面「设置」：读当前快捷键
 ipcMain.handle('get-capture-hotkeys', () => ({
