@@ -3,7 +3,7 @@
 > 一个深色玻璃质感的 Windows 媒体归档工具 —— 图片、视频、音频、笔记、其他文件，一个窗口全管。
 
 
-下载链接：[https://github.com/lastxuan010/Snapbox/releases/tag/v1.0.0](https://github.com/lastxuan010/Snapbox/releases/download/v1.0.1/Snapbox-Setup-1.0.1.exe)
+下载链接：[点这里下载最新版安装包](https://github.com/lastxuan010/Snapbox/releases/latest)
 ![界面截图](docs/screenshot.png)
 
 ## 功能
@@ -54,8 +54,8 @@ npm run dist       # → dist/Snapbox-Setup-<version>.exe（NSIS 安装包）
 
 | 指标 | 数值 |
 |---|---|
-| 安装包 | 69 MB |
-| 安装后占用 | 223 MB（21 个文件） |
+| 安装包 | 68.8 MB |
+| 安装后占用 | 221 MB（21 个文件） |
 | 常驻内存（任务管理器口径） | ~96 MB / 4 个进程 |
 | 列表渲染 11 个条目 | 0.8 ms |
 | 打开条目时列表重建次数 | 0（只更新选中态 class，不重建 DOM） |
