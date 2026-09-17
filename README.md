@@ -1,17 +1,19 @@
-# Snapbox
+# Snapbox 打造自己的微信传输助手
 
 > 一个深色玻璃质感的 Windows 媒体归档工具 —— 图片、视频、音频、笔记、其他文件，一个窗口全管。
 
 
-下载链接：https://github.com/lastxuan010/Snapbox/releases/tag/v1.0.0
+下载链接：[https://github.com/lastxuan010/Snapbox/releases/tag/v1.0.0](https://github.com/lastxuan010/Snapbox/releases/download/v1.0.1/Snapbox-Setup-1.0.1.exe)
 ![界面截图](docs/screenshot.png)
 
 ## 功能
+ai vibe的这个项目，有些地方还不是很成熟
+起因是朋友有个习惯，每看一部动漫都会保存里面的某个场景或者人物，再加上本人平时存一些文件都是放到微信传输助手里，一翻就翻半天，于是就做了这个项目
 
 **媒体归档**
-- 图片 / 视频 / 音频 / 笔记 / 其他文件（PDF、压缩包、文档…）统一入库，自动按扩展名归类
-- 分组管理，卡片可拖拽到左侧分组，支持批量多选（导入到库 / 移动分组 / 删除）
-- 搜索 + 类型筛选，两个维度可叠加（比如「截图」分组里只看其他文件）
+图片，视频，音频，pdf等文件都可保存入库备份，每个文件可备注信息，内置搜索可快速找到需要的文件。
+内置歌曲和视频播放器。
+文件可自定义分组存储，可打包压缩备份
 
 **预览**
 - 图片、视频（可开大播放器，带倍速）
@@ -26,13 +28,7 @@
 - 贴图窗口：拖动、滚轮缩放、透明度调节、双击关闭
 - 快捷键可在设置里改（如被其他程序占用会提示并保留原键）
 
-**导入的便利**
-- 在列表空白处右键粘贴剪贴板里的图片，或直接 `Ctrl + V`
 
-
-**其他**
-- 压缩备份：把分组打包成 `.zip`
-- 卸载不删数据，重装后资源库照旧
 
 ## 从源码运行
 
@@ -52,13 +48,7 @@ npm run build:office   # 需要时重新打包文档预览 bundle（office.bundl
 
 安装包也会发到本仓库的 **Releases** 页面，普通用户直接下载双击安装即可。
 
-## 技术栈
 
-- **Electron 31** + 原生 HTML/CSS/JavaScript（没有前端框架）
-- 条目与缩略图存在 **IndexedDB**；资源文件按分组落盘到 `%APPDATA%\media-archive\library`（位置可在设置里改，见下）
-- 文档预览用 esbuild 把 docx-preview / SheetJS(xlsx) / pptx-preview 打成单个 `office.bundle.js`，**点开文档时才加载**（不拖慢启动）
-- 压缩备份内置 ZIP 写入器（Node 自带 `zlib`），不依赖第三方压缩库
-- 采集（截图/录屏）走 Electron 的 `desktopCapturer` + 独立浮层窗口
 
 ## 性能与体积（本机实测）
 
