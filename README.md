@@ -55,7 +55,7 @@ npm run build:office   # 需要时重新打包文档预览 bundle（office.bundl
 ## 技术栈
 
 - **Electron 31** + 原生 HTML/CSS/JavaScript（没有前端框架）
-- 条目与缩略图存在 **IndexedDB**；资源文件按分组落盘到 `%APPDATA%\media-archive\library`
+- 条目与缩略图存在 **IndexedDB**；资源文件按分组落盘到 `%APPDATA%\media-archive\library`（位置可在设置里改，见下）
 - 文档预览用 esbuild 把 docx-preview / SheetJS(xlsx) / pptx-preview 打成单个 `office.bundle.js`，**点开文档时才加载**（不拖慢启动）
 - 压缩备份内置 ZIP 写入器（Node 自带 `zlib`），不依赖第三方压缩库
 - 采集（截图/录屏）走 Electron 的 `desktopCapturer` + 独立浮层窗口
@@ -72,14 +72,31 @@ npm run build:office   # 需要时重新打包文档预览 bundle（office.bundl
 
 ## 数据位置
 
+默认在 `%APPDATA%\media-archive`（完整路径：`C:\Users\<用户名>\AppData\Roaming\media-archive`）：
+
 ```
 %APPDATA%\media-archive\
-├─ library\            # 你的文件，按分组分文件夹
-├─ zip\                # 压缩备份
-└─ capture-settings.json   # 截图/录屏快捷键
+├─ library\                       你的文件，按分组分文件夹：library\<分组名>\<id>.<扩展名>
+│  └─ zip\                        压缩备份 <分组名>.zip
+├─ IndexedDB\                     条目索引 / 分组 / 缩略图
+├─ Local Storage\                 界面偏好（导入方式、面板折叠、播放速度…）
+├─ capture-settings.json          截图 / 录屏快捷键（改过才有）
+└─ Cache\ GPUCache\ Preferences …  Chromium 自己的缓存，不用管也不用备份
 ```
 
-> 数据目录是钉死的（`main.js` 里显式 `app.setPath('userData', ...)`），改名或换版本都不会让资源库"消失"；卸载也不会删除它。
+**和软件装在哪个盘无关** —— 程序装到 D 盘、改过安装目录，数据都仍然在这里。**卸载也不会删**，重装 / 升级 / 换版本后资源库照旧。
+
+### 想换个位置放
+
+「设置 → 数据目录 → 更改…」选个新文件夹（比如 `D:\SnapboxData`）即可：
+
+- 选**「一起搬过去」**：下次启动会把现有文件、分组、设置、缩略图缓存整体搬过去（只搬这一次，库大的话启动会慢一会儿）
+- 选**「只换位置」**：新位置从空库开始，原位置的数据原样保留、不会被删
+- 位置记在 `%APPDATA%\Snapbox\config.json` —— 指针特意放在数据目录**外面**，这样数据目录本身可以整体搬走
+- 也可以用环境变量 `SNAPBOX_DATA` 指定（优先级最高，适合便携使用或多套资源库）
+- 万一设的位置后来不可用（比如移动硬盘没插、网络盘掉线），启动时会**自动回退到默认位置并弹出提示**，并给出「去设置」入口 —— 不会让你打开后以为库丢了
+
+> 备份就是**把整个数据目录复制走**（至少要 `library\` + `IndexedDB\`）。
 
 ## License
 

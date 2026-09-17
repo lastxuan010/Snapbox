@@ -3,16 +3,135 @@ const { app, BrowserWindow, ipcMain, clipboard, shell, nativeImage, dialog, glob
 const path = require('path');
 const fs = require('fs');
 
-// 数据目录钉死：资源库 / 分组 / 设置全在这里。
-// 打包后 productName 会改变 Electron 默认的 userData 名称 —— 换个显示名不该让老用户的库"消失"，
-// 所以显式指回原来的目录（%APPDATA%\media-archive），开发版和安装版共用同一份数据。
-try {
-  const dataDir = path.join(app.getPath('appData'), 'media-archive');
-  fs.mkdirSync(dataDir, { recursive: true });
-  app.setPath('userData', dataDir);
-} catch (_) {
-  // 兜底：指不过去就用 Electron 默认目录，别让应用起不来
+// ---------- 数据目录 ----------
+// 资源库 / 分组 / 设置 / 缩略图缓存全在这一个目录里。
+// 默认是 %APPDATA%\media-archive —— 显式钉死（打包后 productName 会改变 Electron 默认的
+// userData 名称，换个显示名不该让老用户的库"消失"）。
+// 用户可以在「设置 → 数据目录」里把它改到别的盘（比如 D 盘）。
+// 指针写在固定的 %APPDATA%\Snapbox\config.json —— 特意放在数据目录"外面"，
+// 否则数据目录一搬走，指针就跟着一起搬走了，下次启动会找不到。
+// 优先级：环境变量 SNAPBOX_DATA > 指针文件 > 默认位置。
+const DEFAULT_DATA_DIR = path.join(app.getPath('appData'), 'media-archive');
+const LOCATOR_DIR = path.join(app.getPath('appData'), 'Snapbox');
+const LOCATOR_FILE = path.join(LOCATOR_DIR, 'config.json');
+
+// 给界面看的状态：当前用哪个目录、来自哪里、要不要提醒用户
+const dataDirState = {
+  dir: DEFAULT_DATA_DIR,
+  source: 'default',   // 'default' | 'config' | 'env'
+  warning: '',         // 例如"设置的目录不可用，已临时用默认位置"
+  pendingDir: ''       // 本次运行里改了、但还没重启生效的目录
+};
+
+function readLocator() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(LOCATOR_FILE, 'utf8'));
+    return raw && typeof raw === 'object' ? raw : null;
+  } catch (_) {
+    return null;
+  }
 }
+
+function writeLocator(obj) {
+  try {
+    fs.mkdirSync(LOCATOR_DIR, { recursive: true });
+    fs.writeFileSync(LOCATOR_FILE, JSON.stringify(obj, null, 2), 'utf8');
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// 目录能不能用：能创建、能写入。真写一个探测文件，避免"看着在但只读"（U 盘写保护、网络盘掉线）
+function dirUsable(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const probe = path.join(dir, '.snapbox-write-test');
+    fs.writeFileSync(probe, 'ok');
+    fs.unlinkSync(probe);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// b 是否在 a 里面（含相等）
+function isInside(a, b) {
+  const rel = path.relative(path.resolve(a), path.resolve(b));
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+// 整份搬移：先复制，成功了才删源目录 —— 中途失败不会两边都不全
+function moveDataDir(from, to) {
+  fs.mkdirSync(to, { recursive: true });
+  fs.cpSync(from, to, { recursive: true, force: true, errorOnExist: false });
+  fs.rmSync(from, { recursive: true, force: true });
+}
+
+// 执行上次运行里"待搬移"的请求（用户选了"一起搬过去"）
+// 必须在 app ready 之前跑完：Chromium 一旦初始化，Cache / IndexedDB 就被占用，搬不干净
+function applyPendingMove() {
+  const loc = readLocator();
+  if (!loc || !loc.moveFrom || !loc.dataDir) return;
+
+  const from = path.resolve(String(loc.moveFrom));
+  const to = path.resolve(String(loc.dataDir));
+
+  // 源已经不存在（搬过了或手动挪走）、或本来就同一个 → 清掉标记直接用目标
+  if (from === to || !fs.existsSync(from)) {
+    writeLocator({ dataDir: to });
+    return;
+  }
+
+  try {
+    moveDataDir(from, to);
+    writeLocator({ dataDir: to });
+  } catch (err) {
+    // 搬移失败：退回原目录，并把原因留下来告诉用户，绝不让人打开后看到空库
+    writeLocator({ dataDir: from, moveError: String((err && err.message) || err) });
+  }
+}
+
+function resolveDataDir() {
+  applyPendingMove();
+
+  const loc = readLocator();
+  const envDir = String(process.env.SNAPBOX_DATA || '').trim();
+
+  const candidates = [];
+  if (envDir) candidates.push({ dir: path.resolve(envDir), source: 'env', label: '环境变量 SNAPBOX_DATA 指定的目录' });
+  if (loc && typeof loc.dataDir === 'string' && loc.dataDir.trim()) {
+    candidates.push({ dir: path.resolve(loc.dataDir.trim()), source: 'config', label: '设置里指定的数据目录' });
+  }
+  candidates.push({ dir: DEFAULT_DATA_DIR, source: 'default', label: '默认位置' });
+
+  for (const c of candidates) {
+    if (dirUsable(c.dir)) {
+      dataDirState.dir = c.dir;
+      dataDirState.source = c.source;
+      break;
+    }
+    // 默认位置都写不进去就没什么可回退的了，不用再提示
+    if (c.source !== 'default') {
+      dataDirState.warning = c.label + '（' + c.dir + '）当前不可用，已临时改用默认位置'
+        + ' —— 请检查磁盘是否插好 / 是否被移动，或到「设置 → 数据目录」里改回来';
+    }
+  }
+
+  const moveError = loc && loc.moveError ? String(loc.moveError) : '';
+  if (moveError && !dataDirState.warning) {
+    dataDirState.warning = '上次搬移数据目录时出错，已保留原目录：' + moveError;
+  }
+
+  try {
+    fs.mkdirSync(dataDirState.dir, { recursive: true });
+    app.setPath('userData', dataDirState.dir);
+  } catch (_) {
+    // 兜底：指不过去就用 Electron 默认目录，别让应用起不来
+  }
+}
+
+resolveDataDir();
 
 const zlib = require('zlib');
 
@@ -543,6 +662,141 @@ ipcMain.handle('copy-rich-text', (event, { html, text }) => {
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) };
   }
+});
+
+// ---------- 数据目录：查看 / 更改 / 恢复默认 ----------
+
+// 弹窗的父窗口：不指定的话对话框可能跑到主窗口后面去
+function dialogParent(event) {
+  return (event && event.sender && BrowserWindow.fromWebContents(event.sender)) || null;
+}
+
+// 校验用户挑的目录，返回 { ok:true, dir } 或 { ok:false, error }
+function validateDataTarget(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return { ok: false, error: '路径是空的' };
+
+  const target = path.resolve(raw);
+  if (target === path.resolve(dataDirState.dir)) return { ok: false, error: '这就是当前正在用的数据目录' };
+  if (isInside(dataDirState.dir, target)) {
+    return { ok: false, error: '不能设在当前数据目录里面（搬移时会自己套自己）' };
+  }
+  try {
+    if (fs.existsSync(target) && !fs.statSync(target).isDirectory()) {
+      return { ok: false, error: '这个路径不是文件夹' };
+    }
+  } catch (_) { /* 探测不了就交给下面的可写性检查 */ }
+  if (!dirUsable(target)) {
+    return { ok: false, error: '这个位置不能写入（可能是只读、权限不足，或者磁盘没插好）' };
+  }
+
+  return { ok: true, dir: target };
+}
+
+// 问"现有数据怎么办"：一起搬 / 只换位置 / 取消。返回 true / false / null(取消)
+async function askMoveOrNot(win, targetDir) {
+  const res = await dialog.showMessageBox(win, {
+    type: 'question',
+    buttons: ['一起搬过去（推荐）', '只换位置', '取消'],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+    message: '数据目录改为：\n' + targetDir,
+    detail: '「一起搬过去」：现有的文件、分组、设置、缩略图缓存会在下次启动时整体搬过去，'
+      + '库大的话启动会慢一会儿（只搬这一次）。\n'
+      + '「只换位置」：新位置从空库开始，原位置的数据原样保留、不会被删。'
+  });
+  if (res.response === 2) return null;
+  return res.response === 0;
+}
+
+// 问"现在重启吗"；选立即重启就直接重启（搬移在下次启动时执行，必须在 ready 之前跑）
+async function askRestart(win) {
+  const res = await dialog.showMessageBox(win, {
+    type: 'question',
+    buttons: ['立即重启', '稍后自己重启'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+    message: '设置已保存，重启后生效',
+    detail: '重启后应用会使用新的数据目录'
+  });
+  if (res.response === 0) {
+    app.relaunch();
+    app.exit(0);
+  }
+}
+
+ipcMain.handle('get-data-dir', () => ({
+  ok: true,
+  dir: dataDirState.pendingDir || dataDirState.dir,
+  currentDir: dataDirState.dir,
+  defaultDir: DEFAULT_DATA_DIR,
+  locatorFile: LOCATOR_FILE,
+  source: dataDirState.source,
+  envOverride: String(process.env.SNAPBOX_DATA || '').trim(),
+  warning: dataDirState.warning,
+  pending: Boolean(dataDirState.pendingDir)
+}));
+
+ipcMain.handle('open-data-dir', async () => {
+  const err = await shell.openPath(dataDirState.dir);
+  return { ok: !err, error: err || '' };
+});
+
+// 复制一段纯文本（设置里的数据目录路径点一下就能复制走）
+ipcMain.handle('copy-text', (event, text) => {
+  try {
+    clipboard.writeText(String(text || ''));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+});
+
+ipcMain.handle('choose-data-dir', async (event) => {
+  const win = dialogParent(event);
+  const picked = await dialog.showOpenDialog(win, {
+    title: '选择数据目录（文件、分组、备份都会存到这里）',
+    defaultPath: dataDirState.dir,
+    buttonLabel: '用这个文件夹',
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true };
+
+  const check = validateDataTarget(picked.filePaths[0]);
+  if (!check.ok) return { ok: false, error: check.error };
+
+  const move = await askMoveOrNot(win, check.dir);
+  if (move === null) return { ok: false, canceled: true };
+
+  const wrote = writeLocator(move
+    ? { dataDir: check.dir, moveFrom: dataDirState.dir }
+    : { dataDir: check.dir });
+  if (!wrote) return { ok: false, error: '写设置失败：' + LOCATOR_FILE };
+
+  dataDirState.pendingDir = check.dir;
+  await askRestart(win);
+  return { ok: true, dir: check.dir, move, needsRestart: true };
+});
+
+ipcMain.handle('reset-data-dir', async (event) => {
+  if (path.resolve(dataDirState.dir) === path.resolve(DEFAULT_DATA_DIR)) {
+    return { ok: false, error: '已经在默认位置了' };
+  }
+  const win = dialogParent(event);
+
+  const move = await askMoveOrNot(win, DEFAULT_DATA_DIR);
+  if (move === null) return { ok: false, canceled: true };
+
+  const wrote = writeLocator(move
+    ? { dataDir: DEFAULT_DATA_DIR, moveFrom: dataDirState.dir }
+    : { dataDir: DEFAULT_DATA_DIR });
+  if (!wrote) return { ok: false, error: '写设置失败：' + LOCATOR_FILE };
+
+  dataDirState.pendingDir = DEFAULT_DATA_DIR;
+  await askRestart(win);
+  return { ok: true, dir: DEFAULT_DATA_DIR, move, needsRestart: true };
 });
 
 // ---------- 压缩备份：library/zip/<分组名>.zip ----------

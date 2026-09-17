@@ -2715,6 +2715,7 @@ async function openSettings() {
   // 面板打开期间先停掉全局热键，否则"按下想设置的键"会真的去截图/录屏
   await window.electronAPI?.pauseCaptureHotkeys?.(true);
   renderHotkeySettings(await window.electronAPI?.getCaptureHotkeySettings?.());
+  await refreshDataDir();
 }
 
 async function closeSettings() {
@@ -2742,6 +2743,77 @@ async function applyHotkey(which, accelerator) {
   setSettingsNote('已改为 ' + prettyHotkey(real) + '，立即生效');
 }
 
+// ===== 设置：数据目录（默认 %APPDATA%\media-archive，可改到别的盘）=====
+
+function setDataDirNote(text, isError) {
+  const el = $('#dataDirNote');
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('is-error', Boolean(isError));
+}
+
+async function refreshDataDir() {
+  const el = $('#dataDirPath');
+  if (!el) return;
+
+  const info = await window.electronAPI?.getDataDir?.();
+  if (!info || !info.ok) {
+    el.textContent = '(读取数据目录失败)';
+    setDataDirNote('');
+    return;
+  }
+
+  el.textContent = info.dir;
+  el.title = '点击可复制：' + info.dir;
+  el.classList.toggle('is-pending', Boolean(info.pending));
+
+  const changeBtn = $('#dataDirChangeBtn');
+  const resetBtn = $('#dataDirResetBtn');
+  const openBtn = $('#dataDirOpenBtn');
+
+  // 环境变量优先级最高：这时界面里怎么改都不生效，直接说明白，别让人白点
+  if (info.envOverride) {
+    if (changeBtn) changeBtn.disabled = true;
+    if (resetBtn) resetBtn.disabled = true;
+    if (openBtn) openBtn.disabled = false;
+    setDataDirNote('当前由环境变量 SNAPBOX_DATA 指定（' + info.envOverride + '），这里的更改不会生效');
+    return;
+  }
+
+  if (changeBtn) changeBtn.disabled = false;
+  if (openBtn) openBtn.disabled = false;
+  if (resetBtn) resetBtn.disabled = info.dir === info.defaultDir;
+
+  if (info.pending) {
+    setDataDirNote('已改为上面这个位置，重启后生效（当前还在用 ' + info.currentDir + '）');
+  } else if (info.warning) {
+    setDataDirNote(info.warning, true);
+  } else {
+    setDataDirNote('');
+  }
+}
+
+async function handleDataDirResult(res) {
+  if (!res || res.canceled) return;
+  if (!res.ok) { setDataDirNote(res.error || '更改失败', true); return; }
+  await refreshDataDir();
+}
+
+async function changeDataDir() {
+  setDataDirNote('请在打开的窗口里选择目录…');
+  await handleDataDirResult(await window.electronAPI?.chooseDataDir?.());
+}
+
+async function resetDataDir() {
+  setDataDirNote('正在恢复默认位置…');
+  await handleDataDirResult(await window.electronAPI?.resetDataDir?.());
+}
+
+async function openDataDir() {
+  const res = await window.electronAPI?.openDataDir?.();
+  if (res && !res.ok) setDataDirNote('打开失败：' + (res.error || '未知原因'), true);
+}
+
 function initSettings() {
   $('#settingsBtn')?.addEventListener('click', () => { openSettings(); });
   $('#settingsCloseBtn')?.addEventListener('click', () => { closeSettings(); });
@@ -2749,6 +2821,30 @@ function initSettings() {
   $('#settingsOverlay')?.addEventListener('mousedown', (e) => {
     if (e.target && e.target.id === 'settingsOverlay') closeSettings();
   });
+
+  // ===== 数据目录 =====
+  $('#dataDirOpenBtn')?.addEventListener('click', () => { openDataDir(); });
+  $('#dataDirChangeBtn')?.addEventListener('click', () => { changeDataDir(); });
+  $('#dataDirResetBtn')?.addEventListener('click', () => { resetDataDir(); });
+
+  // 路径点一下就复制，方便贴到别处或做备份说明
+  $('#dataDirPath')?.addEventListener('click', async () => {
+    const text = ($('#dataDirPath')?.textContent || '').trim();
+    if (!text || text === '—') return;
+    const res = await window.electronAPI?.copyText?.(text);
+    setDataDirNote(res && res.ok ? '路径已复制' : '复制失败，可以手动选中路径复制', !(res && res.ok));
+  });
+
+  // 启动时如果数据目录有问题（比如设的那个盘不在了），立刻提醒 —— 别让人以为库丢了
+  (async () => {
+    const info = await window.electronAPI?.getDataDir?.();
+    if (info && info.ok && info.warning) {
+      showToast(info.warning, {
+        duration: 15000,
+        action: { label: '去设置', onAction: () => { openSettings(); } }
+      });
+    }
+  })();
 
   $$('.settings-key').forEach((el) => {
     el.addEventListener('click', () => {

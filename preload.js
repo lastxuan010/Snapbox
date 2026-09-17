@@ -82,6 +82,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   archiveItems: (payload) => ipcRenderer.invoke('archive-items', payload),
   // 打开压缩包文件夹（library/zip）
   openZipFolder: () => ipcRenderer.invoke('open-zip-folder'),
+  // ===== 数据目录（默认 %APPDATA%\media-archive，用户可在设置里改到别的盘）=====
+  getDataDir: () => ipcRenderer.invoke('get-data-dir'),
+  chooseDataDir: () => ipcRenderer.invoke('choose-data-dir'),
+  resetDataDir: () => ipcRenderer.invoke('reset-data-dir'),
+  openDataDir: () => ipcRenderer.invoke('open-data-dir'),
+  // 复制纯文本（数据目录路径点一下就复制）
+  copyText: (text) => ipcRenderer.invoke('copy-text', text),
   // 打包进度回调（覆盖式注册，始终只保留最后一个）
   onArchiveProgress: (cb) => {
     ipcRenderer.removeAllListeners('archive-progress');

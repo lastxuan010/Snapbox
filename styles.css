@@ -3372,6 +3372,29 @@ h1, h2, h3, h4, h5, h6 {
 
 .settings-note.is-error { color: var(--destructive); }
 
+/* 数据目录：路径要能选中复制，所以单独一个块 */
+.settings-path {
+  padding: 8px 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  font-family: ui-monospace, Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--foreground);
+  word-break: break-all;
+  user-select: text;
+  cursor: text;
+}
+
+.settings-path.is-pending { border-color: var(--primary); }
+
+.settings-path__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .settings-card__footer {
   display: flex;
   align-items: center;
