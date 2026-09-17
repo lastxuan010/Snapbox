@@ -1,6 +1,6 @@
 {
   "name": "media-archive",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A dark-glass media archive manager for Windows desktop.",
   "main": "main.js",
   "scripts": {
