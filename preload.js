@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pasteClipboard: (opts) => ipcRenderer.invoke('paste-clipboard', opts),
   // 在资源管理器中显示文件
   showInExplorer: (filePath) => ipcRenderer.invoke('show-in-explorer', filePath),
+  // 库内文件索引（id → 真实绝对路径），用于校正条目里存的旧路径
+  getLibraryIndex: () => ipcRenderer.invoke('get-library-index'),
   // 把文件移入回收站
   trashFile: (filePath) => ipcRenderer.invoke('trash-file', filePath),
   // 把库内备份（data URL）落盘为真实文件，返回其路径（group 决定放进哪个分组文件夹）

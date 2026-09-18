@@ -515,8 +515,14 @@ ipcMain.handle('paste-clipboard', (event, opts) => {
 });
 
 // 在资源管理器中显示文件
+// 路径不存在时必须明确报回来：shell.showItemInFolder 对不存在的路径是静默失败，
+// 用户只会看到"点了没反应"，完全不知道发生了什么
 ipcMain.handle('show-in-explorer', (event, filePath) => {
   try {
+    if (!filePath) return { ok: false, error: '这个条目没有记录文件路径' };
+    if (!fs.existsSync(filePath)) {
+      return { ok: false, missing: true, error: '文件不在这里了：' + filePath };
+    }
     shell.showItemInFolder(filePath);
     return { ok: true };
   } catch (err) {
@@ -856,6 +862,18 @@ ipcMain.handle('reset-data-dir', async (event) => {
   dataDirState.pendingDir = DEFAULT_DATA_DIR;
   await askRestart(win);
   return { ok: true, dir: DEFAULT_DATA_DIR, move, needsRestart: true };
+});
+
+// 库内文件索引（id → 真实绝对路径）：给渲染进程校正条目里存的旧路径用。
+// 数据目录搬走后条目里还是老路径，靠这份"以磁盘为准"的索引自愈
+ipcMain.handle('get-library-index', () => {
+  try {
+    const files = {};
+    for (const [id, absPath] of buildLibraryIndex()) files[id] = absPath;
+    return { ok: true, files, root: libraryRoot() };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
 });
 
 // ---------- 压缩备份：library/zip/<分组名>.zip ----------

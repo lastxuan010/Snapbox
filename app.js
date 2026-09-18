@@ -91,6 +91,26 @@ async function deleteGroup(id) {
   return withStore(GROUPS_STORE, 'readwrite', (store) => store.delete(id));
 }
 
+// 按"以磁盘为准"的库索引校正条目里存的绝对路径。
+// 起因：数据目录被搬到别的盘之后，文件跟着走了，但条目里记的还是旧绝对路径，
+// 于是「在资源管理器中显示 / 打开」全都点了没反应（缩略图存在 IndexedDB 里，看着一切正常）。
+// 返回修正的条数；库里找不到的（比如外部文件、真被删了）不动，避免误改。
+async function repairItemPaths() {
+  const index = await window.electronAPI?.getLibraryIndex?.();
+  if (!index || !index.ok || !index.files) return 0;
+
+  let fixed = 0;
+  for (const item of state.items) {
+    const real = index.files[item.id];
+    if (!real) continue;
+    if (item.backupPath === real) continue;
+    item.backupPath = real;
+    await saveItem(item);
+    fixed++;
+  }
+  return fixed;
+}
+
 function generateId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -647,9 +667,11 @@ function officeActions(item) {
   folderBtn.className = 'btn btn--secondary btn--sm';
   folderBtn.textContent = '位置';
   folderBtn.title = '在文件夹中显示';
-  folderBtn.addEventListener('click', () => {
+  folderBtn.addEventListener('click', async () => {
     const diskPath = itemDiskPath(item);
-    if (diskPath) window.electronAPI?.showInExplorer?.(diskPath);
+    if (!diskPath) { showToast('这个条目还没有落盘文件'); return; }
+    const res = await window.electronAPI?.showInExplorer?.(diskPath);
+    if (res && !res.ok) showToast(res.error || '找不到这个文件');
   });
 
   bar.appendChild(openBtn);
@@ -3038,7 +3060,9 @@ async function handleContextAction(action) {
 
   if (action === 'revealBackupPath') {
     const diskPath = itemDiskPath(item);
-    if (diskPath) window.electronAPI?.showInExplorer?.(diskPath);
+    if (!diskPath) { showToast('这个条目没有记录文件路径'); return; }
+    const res = await window.electronAPI?.showInExplorer?.(diskPath);
+    if (res && !res.ok) showToast(res.error || '找不到这个文件');
     return;
   }
 
@@ -3059,9 +3083,9 @@ async function handleContextAction(action) {
   }
 
   if (action === 'revealSource') {
-    if (item?.sourcePath) {
-      window.electronAPI?.showInExplorer?.(item.sourcePath);
-    }
+    if (!item?.sourcePath) { showToast('这个条目没有记录原路径'); return; }
+    const res = await window.electronAPI?.showInExplorer?.(item.sourcePath);
+    if (res && !res.ok) showToast(res.error || '原文件不在这里了');
     return;
   }
 
@@ -4701,6 +4725,13 @@ function initEvents() {
 async function init() {
   state.items = await loadItems();
   state.groups = await loadGroups();
+
+  // 数据目录搬过位置 → 条目里还存着旧的绝对路径，按磁盘上的真实位置校正一遍（一次性自愈）
+  const fixedPaths = await repairItemPaths();
+  if (fixedPaths) {
+    showToast(`已修正 ${fixedPaths} 个文件的路径（数据目录搬过位置）`, { duration: 7000 });
+  }
+
   await migrateMusicGroups();
   installVideoFullscreenIntercept();
   initTheaterResize();
