@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pruneLibraryFolders: () => ipcRenderer.invoke('prune-library-folders'),
   // 弹出系统保存对话框写文本文件（导出 HTML 等）
   saveTextFile: (payload) => ipcRenderer.invoke('save-text-file', payload),
+  // 把一条笔记导出成 PDF（走系统保存对话框；排版在主进程里用隐藏窗口渲染）
+  exportNotePdf: (payload) => ipcRenderer.invoke('export-note-pdf', payload),
   // 复制富文本（HTML + 纯文本）到剪贴板
   copyRichText: (html, text) => ipcRenderer.invoke('copy-rich-text', { html, text }),
   // 连按两下 J：收起窗口（恢复由主进程的全局快捷键接管）

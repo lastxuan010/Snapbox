@@ -719,6 +719,132 @@ ipcMain.handle('save-text-file', async (event, { defaultName, content }) => {
   }
 });
 
+// ---------- 笔记导出 PDF ----------
+
+function escapeXmlText(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// 打印专用的独立文档：白底黑字、A4 友好。
+// 笔记内容本身是一段 HTML 片段（可能带 data URL 图片），直接嵌进来即可
+function buildNotePdfHtml(title, contentHtml) {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>${escapeXmlText(title)}</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: #ffffff;
+    color: #1a1a1a;
+    font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
+    font-size: 12pt;
+    line-height: 1.75;
+    -webkit-print-color-adjust: exact;
+  }
+  .doc-title { font-size: 20pt; font-weight: 700; line-height: 1.35; margin: 0 0 6px; }
+  .doc-meta { margin: 0 0 20px; padding-bottom: 10px; border-bottom: 1px solid #e6e6e8; color: #8a8a8e; font-size: 9pt; }
+  .doc-content > :first-child { margin-top: 0; }
+  h1 { font-size: 17pt; margin: 22px 0 10px; }
+  h2 { font-size: 14.5pt; margin: 18px 0 8px; }
+  h3 { font-size: 12.5pt; margin: 16px 0 6px; }
+  h1, h2, h3, h4 { page-break-after: avoid; }
+  p { margin: 0 0 10px; }
+  ul, ol { margin: 0 0 10px; padding-left: 24px; }
+  li { margin: 2px 0; }
+  blockquote {
+    margin: 10px 0; padding: 2px 0 2px 12px;
+    border-left: 3px solid #d5d5d8; color: #55555a;
+    page-break-inside: avoid;
+  }
+  code {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 10.5pt;
+    background: #f4f4f6;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+  pre {
+    margin: 0 0 12px; padding: 10px 12px;
+    background: #f6f6f8; border: 1px solid #e6e6e8; border-radius: 6px;
+    white-space: pre-wrap; word-break: break-word;
+    page-break-inside: avoid;
+  }
+  pre code { background: none; padding: 0; }
+  a { color: #0b62d0; text-decoration: none; word-break: break-all; }
+  img { max-width: 100%; height: auto; page-break-inside: avoid; }
+  hr { border: none; border-top: 1px solid #e3e3e6; margin: 20px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 12px; page-break-inside: avoid; }
+  th, td { border: 1px solid #dcdce0; padding: 5px 8px; text-align: left; font-size: 10.5pt; vertical-align: top; }
+  th { background: #f5f5f7; font-weight: 600; }
+  /* 笔记里内嵌的旧版目录块不打印（浏览态是靠侧边目录，打印时不需要） */
+  .note-toc, .note-toc--inline { display: none !important; }
+</style>
+</head>
+<body>
+  <h1 class="doc-title">${escapeXmlText(title)}</h1>
+  <p class="doc-meta">由 Snapbox 导出于 ${stamp}</p>
+  <div class="doc-content">${contentHtml || ''}</div>
+</body>
+</html>`;
+}
+
+// 把笔记 HTML 打成 PDF：隐藏窗口渲染 → printToPDF → 写文件（走系统保存对话框）
+ipcMain.handle('export-note-pdf', async (event, payload) => {
+  const title = String((payload && payload.title) || '').trim() || '笔记';
+  const contentHtml = String((payload && payload.html) || '');
+  const suggested = String((payload && payload.fileName) || '').trim();
+
+  let tmpFile = '';
+  let win = null;
+  try {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const picked = await dialog.showSaveDialog(parent, {
+      title: '导出为 PDF',
+      defaultPath: suggested || (title + '.pdf'),
+      filters: [{ name: 'PDF 文档', extensions: ['pdf'] }]
+    });
+    if (picked.canceled || !picked.filePath) return { ok: false, canceled: true };
+
+    // 走临时文件而不是 data URL：笔记里可能内嵌几 MB 的图片，data URL 会被长度限制卡住
+    tmpFile = path.join(app.getPath('temp'),
+      `snapbox-note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.html`);
+    fs.writeFileSync(tmpFile, buildNotePdfHtml(title, contentHtml), 'utf8');
+
+    win = new BrowserWindow({
+      show: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true, javascript: false }
+    });
+    // loadFile 在 did-finish-load 时 resolve，那时图片等子资源也已经就绪
+    await win.loadFile(tmpFile);
+    await new Promise((r) => setTimeout(r, 250));   // 给图片解码留一点余量
+
+    const pdf = await win.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      margins: { top: 0.7, bottom: 0.7, left: 0.6, right: 0.6 }
+    });
+
+    fs.writeFileSync(picked.filePath, pdf);
+    return { ok: true, path: picked.filePath, size: pdf.length };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  } finally {
+    try { if (win && !win.isDestroyed()) win.destroy(); } catch (_) { /* ignore */ }
+    try { if (tmpFile && fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (_) { /* ignore */ }
+  }
+});
+
 // 复制富文本（HTML + 纯文本）到剪贴板，可粘贴到公众号/知乎等平台
 ipcMain.handle('copy-rich-text', (event, { html, text }) => {
   try {

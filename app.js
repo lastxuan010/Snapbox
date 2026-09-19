@@ -3037,6 +3037,11 @@ async function handleContextAction(action) {
 
   const item = state.items.find((i) => i.id === ids[0]);
 
+  if (action === 'exportPdf') {
+    await exportNoteAsPdf(item);
+    return;
+  }
+
   if (action === 'copy') {
     if (!item) return;
     if (item.type === 'note') {
@@ -3485,6 +3490,7 @@ function openContextMenu(e, ids) {
   if (single) {
     if (isNote) {
       rows.push({ label: '复制 Markdown', action: 'copy' });
+      rows.push({ label: '导出为 PDF…', action: 'exportPdf', tip: '把这条笔记导出成 PDF 文件' });
     } else {
       rows.push({ label: '复制图片', action: 'copy', disabled: !ipcReady, tip: ipcReady ? '' : '需要重启应用后可用' });
       // 按文件的实际存放位置给出对应入口
@@ -3909,6 +3915,34 @@ async function persistNoteEditor() {
   $('#metaDesc').value = item.description;
   renderGrid();
   return true;
+}
+
+// 把一条笔记导出成 PDF：排版交给主进程（隐藏窗口渲染 + printToPDF），这里只负责取名与提示
+async function exportNoteAsPdf(item, liveHtml) {
+  if (!item) return;
+
+  const html = liveHtml != null ? liveHtml : (item.description || '');
+  if (!html.trim()) {
+    showToast('这条笔记还是空的，没什么可导出的');
+    return;
+  }
+
+  // 文件名优先用笔记名；还是默认名的话退化成正文开头
+  const rawTitle = (item.name && item.name !== '未命名笔记') ? item.name : getNoteExcerpt(html, 20);
+  const title = rawTitle || '笔记';
+  const fileName = String(title).replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) + '.pdf';
+
+  showToast('正在生成 PDF…', { duration: 1600 });
+  const res = await window.electronAPI?.exportNotePdf?.({ title, html, fileName });
+
+  if (!res) { showToast('导出失败：主进程没有响应'); return; }
+  if (res.canceled) return;
+  if (!res.ok) { showToast('导出失败：' + (res.error || '未知错误')); return; }
+
+  showToast(`已导出 PDF（${formatFileSize(res.size)}）`, {
+    duration: 8000,
+    action: { label: '查看位置', onAction: () => window.electronAPI?.showInExplorer?.(res.path) }
+  });
 }
 
 // "返回"按钮：默认先自动保存，再退出编辑器
@@ -4542,6 +4576,16 @@ function initEvents() {
     e.preventDefault();
     if (btn.dataset.level) richExec('formatBlock', '<' + btn.dataset.level + '>');
     else execEditorCommand(btn.dataset.cmd);
+  });
+
+  // 工具栏「导出 PDF」：先把编辑器内容落盘，保证导出的就是眼前这份（含没保存的改动）
+  $('#noteToolbar').addEventListener('mousedown', async (e) => {
+    if (!e.target.closest || !e.target.closest('#noteExportPdfBtn')) return;
+    e.preventDefault();
+    const item = state.items.find((i) => i.id === state.selectedId);
+    if (!item || item.type !== 'note') return;
+    await persistNoteEditor();
+    await exportNoteAsPdf(item);
   });
 
   // 顶部工具栏搜索框：搜索笔记内容
