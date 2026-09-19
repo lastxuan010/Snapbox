@@ -935,6 +935,41 @@ ipcMain.handle('open-data-dir', async () => {
   return { ok: !err, error: err || '' };
 });
 
+// 把条目当作"真实文件"拖出应用：浏览器上传框 / 资源管理器 / 其它软件只认系统拖拽里的文件，
+// 网页自己的 dataTransfer 它们收不到（表现为"拖过去没反应"或 files length is 0）。
+// 只能在 dragstart 里调用 —— 这是 Electron 的硬要求，否则不生效。
+ipcMain.on('start-drag-file', (event, payload) => {
+  try {
+    const filePath = String((payload && payload.filePath) || '');
+    if (!filePath || !fs.existsSync(filePath)) return;
+
+    // 跟着鼠标的小图：优先用列表里那份缩略图（现成、够小），不行再退回应用图标
+    let icon = nativeImage.createEmpty();
+    const dataUrl = String((payload && payload.iconDataUrl) || '');
+    if (dataUrl.startsWith('data:image/')) {
+      try {
+        const img = nativeImage.createFromDataURL(dataUrl);
+        if (!img.isEmpty()) icon = img.resize({ width: 96, quality: 'good' });
+      } catch (_) { /* 落到下面的兜底 */ }
+    }
+    if (icon.isEmpty()) {
+      try {
+        const appIcon = path.join(__dirname, 'assets', 'app-icon.png');
+        if (fs.existsSync(appIcon)) {
+          const img = nativeImage.createFromPath(appIcon);
+          if (!img.isEmpty()) icon = img.resize({ width: 96, quality: 'good' });
+        }
+      } catch (_) { /* 没图标也能拖，只是鼠标旁边没有跟随图 */ }
+    }
+    // startDrag 要求必须给图标；实在拿不到就放弃原生拖拽，让网页那套拖拽继续走
+    if (icon.isEmpty()) return;
+
+    event.sender.startDrag({ file: filePath, icon });
+  } catch (err) {
+    console.warn('[drag] 拖出文件失败：' + ((err && err.message) || err));
+  }
+});
+
 // 复制一段纯文本（设置里的数据目录路径点一下就能复制走）
 ipcMain.handle('copy-text', (event, text) => {
   try {

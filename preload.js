@@ -89,6 +89,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   chooseDataDir: () => ipcRenderer.invoke('choose-data-dir'),
   resetDataDir: () => ipcRenderer.invoke('reset-data-dir'),
   openDataDir: () => ipcRenderer.invoke('open-data-dir'),
+  // 把条目当真实文件拖出应用（拖到浏览器上传框 / 资源管理器 / 其它软件）
+  // 只在 dragstart 事件里调用，主进程会接管成系统原生拖拽
+  startDragFile: (filePath, iconDataUrl) =>
+    ipcRenderer.send('start-drag-file', { filePath, iconDataUrl }),
   // 复制纯文本（数据目录路径点一下就复制）
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
   // 打包进度回调（覆盖式注册，始终只保留最后一个）

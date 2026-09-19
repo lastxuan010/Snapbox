@@ -1034,7 +1034,19 @@ function renderFolders() {
         const parsed = JSON.parse(e.dataTransfer.getData('text/plain'));
         ids = Array.isArray(parsed) ? parsed : [parsed];
       } catch (_) { /* 非本应用数据，忽略 */ }
+
+      // 单条拖拽走的是系统原生拖拽（text/plain 里没有数据），
+      // 这时靠拖拽携带的真实文件路径反查条目，拖回分组依然生效
       ids = ids.filter(Boolean);
+      if (!ids.length && e.dataTransfer.files && e.dataTransfer.files.length) {
+        const paths = [...e.dataTransfer.files]
+          .map((f) => window.electronAPI?.getPathForFile?.(f) || '')
+          .filter(Boolean);
+        if (paths.length) {
+          ids = state.items.filter((i) => paths.includes(itemDiskPath(i))).map((i) => i.id);
+        }
+      }
+
       if (ids.length) moveItemsToGroup(ids, gid);
     });
   });
@@ -1263,6 +1275,14 @@ function renderGrid() {
         e.dataTransfer.setData('text/plain', JSON.stringify(ids));
         e.dataTransfer.effectAllowed = 'move';
         card.classList.add('is-dragging');
+
+        // 只拖一个、且磁盘上有真实文件时，同时发起"系统原生拖拽"：
+        // 这样可以直接拖进浏览器上传框、资源管理器、其它软件（它们只认真正的文件）
+        if (ids.length === 1) {
+          const item = state.items.find((i) => i.id === ids[0]);
+          const diskPath = itemDiskPath(item);
+          if (diskPath) window.electronAPI?.startDragFile?.(diskPath, item.thumbnail || '');
+        }
       });
       card.addEventListener('dragend', () => {
         card.classList.remove('is-dragging');
@@ -4228,6 +4248,13 @@ function renderMusicList() {
       e.dataTransfer.setData('text/plain', JSON.stringify(ids));
       e.dataTransfer.effectAllowed = 'move';
       row.classList.add('is-dragging');
+
+      // 单条拖拽时同时发起系统原生拖拽，方便直接拖进浏览器 / 别的软件
+      if (ids.length === 1) {
+        const item = state.items.find((i) => i.id === ids[0]);
+        const diskPath = itemDiskPath(item);
+        if (diskPath) window.electronAPI?.startDragFile?.(diskPath, item.thumbnail || '');
+      }
     });
     row.addEventListener('dragend', () => {
       row.classList.remove('is-dragging');
