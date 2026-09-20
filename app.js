@@ -1276,12 +1276,20 @@ function renderGrid() {
         e.dataTransfer.effectAllowed = 'move';
         card.classList.add('is-dragging');
 
-        // 只拖一个、且磁盘上有真实文件时，同时发起"系统原生拖拽"：
-        // 这样可以直接拖进浏览器上传框、资源管理器、其它软件（它们只认真正的文件）
+        // 只拖一个、且磁盘上有真实文件时，改成"系统原生拖拽"：
+        // 这样可以直接拖进浏览器上传框、微信、资源管理器、其它软件（它们只认真正的文件）
         if (ids.length === 1) {
           const item = state.items.find((i) => i.id === ids[0]);
           const diskPath = itemDiskPath(item);
-          if (diskPath) window.electronAPI?.startDragFile?.(diskPath, item.thumbnail || '');
+          if (diskPath) {
+            // 关键：必须取消网页自带的拖拽。不取消的话两边会打架，
+            // 外部程序收到的是上面那串 id 文本，而不是文件。
+            e.preventDefault();
+            // 原生拖拽自带跟随鼠标的缩略图，所以不用再标 is-dragging
+            // （网页拖拽被取消后 dragend 不一定触发，标了容易留在那儿）
+            card.classList.remove('is-dragging');
+            window.electronAPI?.startDragFile?.(diskPath, item.thumbnail || '');
+          }
         }
       });
       card.addEventListener('dragend', () => {
@@ -4249,11 +4257,16 @@ function renderMusicList() {
       e.dataTransfer.effectAllowed = 'move';
       row.classList.add('is-dragging');
 
-      // 单条拖拽时同时发起系统原生拖拽，方便直接拖进浏览器 / 别的软件
+      // 单条拖拽时改成系统原生拖拽，方便直接拖进浏览器 / 微信 / 别的软件
       if (ids.length === 1) {
         const item = state.items.find((i) => i.id === ids[0]);
         const diskPath = itemDiskPath(item);
-        if (diskPath) window.electronAPI?.startDragFile?.(diskPath, item.thumbnail || '');
+        if (diskPath) {
+          // 必须取消网页拖拽，否则外部程序收到的会是一串 id 文本而不是文件
+          e.preventDefault();
+          row.classList.remove('is-dragging');
+          window.electronAPI?.startDragFile?.(diskPath, item.thumbnail || '');
+        }
       }
     });
     row.addEventListener('dragend', () => {
