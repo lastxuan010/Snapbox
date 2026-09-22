@@ -585,6 +585,10 @@ body {
   overflow-y: auto;
   padding-right: 4px;
   align-content: start;
+  /* 这一行不能删：卡片是 aspect-ratio:1 的方格子，高度由栏宽推出来。
+     少了它，行高会按"内容高度"（卡片内容是绝对定位的，≈0）算成几像素，
+     卡片就溢出自己的行、和下一行叠在一起（2026-09 修过的那个 bug）。 */
+  grid-auto-rows: max-content;
 }
 
 .thumb-grid::-webkit-scrollbar {
@@ -610,9 +614,10 @@ body {
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
   box-shadow: var(--shadow-xs);
-  /* 屏外的卡片跳过布局与绘制：条目多的时候滚动明显更顺（尺寸要接近实际卡片，避免滚动条跳动） */
-  content-visibility: auto;
-  contain-intrinsic-size: 96px 96px;
+  /* 注意：这里不要用 content-visibility: auto + contain-intrinsic-size。
+     屏外卡片会被套上"尺寸包含"，行高按占位尺寸算（卡片实际宽度跟着栏宽走，常见 130~180px，
+     远大于 96px 的占位），卡片就会溢出自己的行、和下一行叠在一起 —— 上面 .thumb-grid 的
+     grid-auto-rows: max-content 也就白费了。缩略图已经用 loading="lazy" 延迟解码，够了。 */
 }
 
 .thumb-card:hover {
