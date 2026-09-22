@@ -868,6 +868,7 @@ function applyFilter(kind) {
   state.filter = kind;
   $$('.filter-chip').forEach((c) => c.classList.toggle('is-active', c.dataset.filter === kind));
   renderGrid();
+  saveViewState();
 }
 
 async function createNote() {
@@ -1063,6 +1064,7 @@ function renderFolders() {
       state.selectedGroupId = state.selectedGroupId === id ? 'all' : id;
       renderFolders();
       renderGrid();
+      saveViewState();
     });
   });
 
@@ -1141,6 +1143,7 @@ async function createGroup(name = '新分组') {
   state.selectedGroupId = group.id;
   renderFolders();
   renderGrid();
+  saveViewState();
   renderMetaGroupOptions();
   showToast('分组已创建，资源文件夹里已建好同名文件夹');
   // 创建后自动进入重命名模式，让用户立即命名
@@ -1177,6 +1180,7 @@ async function removeGroup(groupId) {
 
   renderFolders();
   renderGrid();
+  saveViewState();
   renderMetaGroupOptions();
   showToast('分组已删除，项目移至未分组');
 }
@@ -1572,6 +1576,7 @@ function createSpeedControl(video, host) {
 async function selectItem(id) {
   state.selectedId = id;
   syncGridSelection();   // 只改选中态，不重建列表（省下重复解码缩略图的开销与内存）
+  saveViewState();       // 下次打开时右侧详情面板还停在这条上
 
   const item = state.items.find((i) => i.id === id);
   if (!item) return;
@@ -3567,6 +3572,108 @@ function restoreMetaPanelState() {
   applyMetaCollapsed(localStorage.getItem(META_COLLAPSED_KEY) === '1');
 }
 
+// ===== 上次关闭前的页面 =====
+// "页面" = 左侧分组 + 类型筛选 + 搜索词 + 选中的条目 + 列表滚动位置。
+// 重启后回到这里，而不是永远打开「全部」。
+
+const VIEW_KEY = 'memorie.lastView';
+// 滚动位置单独一个键：它只由滚动事件写入，不会被"顺手保存页面"的动作冲成 0
+const VIEW_SCROLL_KEY = 'memorie.lastViewScroll';
+
+function readSavedView() {
+  try {
+    const v = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null');
+    return v && typeof v === 'object' ? v : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// 网格的滚动容器未必是 #thumbGrid 自己（取决于布局），往上找第一个能滚的祖先
+function gridScroller() {
+  let el = $('#thumbGrid');
+  while (el && el !== document.body) {
+    const oy = getComputedStyle(el).overflowY;
+    if (oy === 'auto' || oy === 'scroll') return el;
+    el = el.parentElement;
+  }
+  return $('#thumbGrid');
+}
+
+function saveViewState() {
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify({
+      groupId: state.selectedGroupId,
+      filter: state.filter,
+      search: state.search,
+      itemId: state.selectedId || ''
+    }));
+  } catch (_) { /* 存不下就算了，不影响使用 */ }
+}
+
+function saveViewScroll() {
+  try {
+    const el = gridScroller();
+    localStorage.setItem(VIEW_SCROLL_KEY, String(el ? Math.round(el.scrollTop) : 0));
+  } catch (_) { /* 同上 */ }
+}
+
+// 把上次的页面装回 state（只改状态、不碰 DOM），返回原始数据供渲染后收尾
+function restoreViewState() {
+  const saved = readSavedView();
+  if (!saved) return null;
+
+  // 分组可能已经被删掉（或配置是从别处拷来的）→ 认不出来就回「全部」
+  const gid = String(saved.groupId || 'all');
+  const known = gid === 'all' || gid === 'ungrouped' || state.groups.some((g) => g.id === gid);
+  state.selectedGroupId = known ? gid : 'all';
+
+  // 类型筛选只认这几种
+  const kinds = ['all', 'image', 'video', 'audio', 'note', 'other'];
+  state.filter = kinds.includes(saved.filter) ? saved.filter : 'all';
+
+  const q = String(saved.search || '');
+  state.search = q;
+  const box = $('#searchInput');
+  if (box) box.value = q;
+
+  return saved;
+}
+
+// 网格渲染完之后的收尾：选中的条目（右侧详情面板）与滚动位置
+async function restoreViewTail(saved) {
+  if (!saved) return;
+
+  // 顺序很重要：selectItem 会把选中的卡片滚进视野（它是异步的），
+  // 所以滚动位置必须放在它后面恢复，否则刚摆好就被它带跑了。
+  const id = String(saved.itemId || '');
+  if (id && state.items.some((i) => i.id === id)) {
+    await selectItem(id);
+  }
+
+  const top = Number(localStorage.getItem(VIEW_SCROLL_KEY)) || 0;
+  if (top > 0) {
+    const scroller = gridScroller();
+    if (scroller) scroller.scrollTop = top;
+
+    // 卡片高度要等缩略图和布局稳下来，内容会慢慢变高；在那之前设 scrollTop 会被"夹住"。
+    // 所以隔一会儿对一次，到位就停（最多试 6 秒，别一直挂着定时器）
+    const place = () => {
+      const el = gridScroller();
+      if (!el) return true;
+      el.scrollTop = top;
+      return Math.abs(el.scrollTop - top) < 4;
+    };
+    requestAnimationFrame(() => {
+      if (place()) return;
+      let tries = 0;
+      const timer = setInterval(() => {
+        if (place() || ++tries > 30) clearInterval(timer);
+      }, 200);
+    });
+  }
+}
+
 // ===== 分组栏 / 列表栏的收起与展开 =====
 const PANEL_FOLD_KEY = 'memorie.panelFold';
 
@@ -4482,14 +4589,23 @@ function initEvents() {
   $('#searchInput').addEventListener('input', (e) => {
     state.search = e.target.value.trim();
     renderGrid();
+    saveViewState();
   });
+
+  // 列表滚动位置也算「上次的页面」：滚动停下来再存，避免一路滚一路写
+  const listScroller = gridScroller();
+  if (listScroller && listScroller.addEventListener) {
+    let scrollSaveTimer = 0;
+    listScroller.addEventListener('scroll', () => {
+      clearTimeout(scrollSaveTimer);
+      scrollSaveTimer = setTimeout(saveViewScroll, 300);
+    });
+  }
 
   $$('.filter-chip').forEach((chip) => {
     chip.addEventListener('click', () => {
-      $$('.filter-chip').forEach((c) => c.classList.remove('is-active'));
-      chip.classList.add('is-active');
-      state.filter = chip.dataset.filter;
-      renderGrid();
+      // applyFilter 里已经做了「高亮 + 刷新列表 + 记住上次页面」，这里不重复一份
+      applyFilter(chip.dataset.filter);
     });
   });
 
@@ -4817,13 +4933,18 @@ async function init() {
   }
 
   await migrateMusicGroups();
+
+  // 回到上次关闭前的页面（分组 / 类型筛选 / 搜索词 / 选中的条目 / 滚动位置）
+  const savedView = restoreViewState();
+
   installVideoFullscreenIntercept();
   initTheaterResize();
   renderFolders();
-  renderGrid();
+  applyFilter(state.filter);   // 顺带把 chip 高亮同步过来，并渲染列表
   initEvents();
   restoreMetaPanelState();
   restorePanelFoldState();
+  await restoreViewTail(savedView);
   initCapture();
 
   // 启动稳定之后再去修历史遗留的超大缩略图（首次会提示一条，之后都是空跑）
